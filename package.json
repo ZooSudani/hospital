@@ -3,3 +3,4 @@
   "private": true,
   "type": "module",
   "scripts": { "test": "node tests/auth.test.js && node tests/isolation.test.js" }
+}
