@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>نظام المستشفيات · لوحة الاختبار</title>
+<style>
+  :root { --ink:#1f2933; --muted:#5b6b7f; --line:#cbd5e1; --navy:#1b3556; --teal:#1f7a8c; --bg:#f6f8fa; --bad:#b42318; --ok:#067647; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, "Segoe UI", Tahoma, "Noto Naskh Arabic", sans-serif; color:var(--ink); background:var(--bg); line-height:1.7; }
+  header { background:var(--navy); color:#fff; padding:14px 16px; display:flex; justify-content:space-between; align-items:center; gap:12px; }
+  header h1 { font-size:17px; margin:0; }
+  header small { opacity:.8; display:block; font-size:12px; }
+  main { max-width:560px; margin:0 auto; padding:16px; }
+  section { background:#fff; border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:14px; }
+  h2 { font-size:15px; margin:0 0 10px; color:var(--navy); }
+  label { display:block; font-size:13px; color:var(--muted); margin:8px 0 3px; }
+  input, select, textarea { width:100%; font:inherit; padding:10px; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--ink); }
+  input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px solid var(--teal); outline-offset:1px; }
+  button { font:inherit; font-weight:600; background:var(--teal); color:#fff; border:0; border-radius:8px; padding:10px 16px; margin-top:12px; cursor:pointer; }
+  button.ghost { background:transparent; color:#fff; border:1px solid rgba(255,255,255,.5); margin:0; padding:6px 12px; }
+  button.line { background:#fff; color:var(--navy); border:1px solid var(--line); }
+  #msg { min-height:24px; font-size:14px; margin:0 0 10px; }
+  #msg.err { color:var(--bad); } #msg.ok { color:var(--ok); }
+  table { width:100%; border-collapse:collapse; font-size:14px; margin-top:8px; }
+  th, td { text-align:right; padding:8px 6px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:600; }
+  .row { display:flex; gap:8px; } .row > * { flex:1; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<header>
+  <div><h1 id="title">نظام إدارة المستشفيات</h1><small id="who">لم تسجل الدخول</small></div>
+  <button class="ghost" id="logout" hidden>خروج</button>
+</header>
+<main>
+  <p id="msg" role="status"></p>
+
+  <section id="s-login">
+    <h2>تسجيل الدخول</h2>
+    <label for="slug">رمز المستشفى (للمدير العام اكتب platform)</label>
+    <input id="slug" autocomplete="username" autocapitalize="none" dir="ltr">
+    <label for="email">البريد الإلكتروني</label>
+    <input id="email" type="email" autocomplete="email" dir="ltr">
+    <label for="password">كلمة المرور</label>
+    <input id="password" type="password" autocomplete="current-password" dir="ltr">
+    <button id="do-login">تسجيل الدخول</button>
+  </section>
+
+  <section id="s-setup" hidden>
+    <h2>إنشاء مدير المنصة (مرة واحدة)</h2>
+    <label for="su-key">مفتاح الإعداد (SETUP_KEY)</label><input id="su-key" type="password" dir="ltr">
+    <label for="su-name">الاسم</label><input id="su-name">
+    <label for="su-email">البريد</label><input id="su-email" type="email" dir="ltr">
+    <label for="su-pass">كلمة المرور (8 أحرف على الأقل)</label><input id="su-pass" type="password" dir="ltr">
+    <button id="do-setup">إنشاء مدير المنصة</button>
+  </section>
+  <p id="setup-link" style="text-align:center"><button class="line" id="toggle-setup">أول مرة؟ أنشئ مدير المنصة</button></p>
+
+  <section id="s-platform" hidden>
+    <h2>إضافة مستشفى جديد</h2>
+    <label for="t-name">اسم المستشفى</label><input id="t-name">
+    <label for="t-slug">رمز المستشفى (إنجليزي صغير)</label><input id="t-slug" dir="ltr" autocapitalize="none">
+    <label for="t-aname">اسم مدير المستشفى</label><input id="t-aname">
+    <label for="t-aemail">بريد مدير المستشفى</label><input id="t-aemail" type="email" dir="ltr">
+    <label for="t-apass">كلمة مروره (8 أحرف على الأقل)</label><input id="t-apass" type="password" dir="ltr">
+    <button id="do-tenant">إضافة المستشفى</button>
+    <h2 style="margin-top:18px">المستشفيات</h2>
+    <table><thead><tr><th>الاسم</th><th>الرمز</th><th>الحالة</th></tr></thead><tbody id="tenants"></tbody></table>
+  </section>
+
+  <section id="s-patients" hidden>
+    <h2>تسجيل مريض</h2>
+    <label for="p-name">الاسم الكامل</label><input id="p-name">
+    <div class="row">
+      <div><label for="p-phone">الهاتف</label><input id="p-phone" inputmode="tel" dir="ltr"></div>
+      <div><label for="p-birth">تاريخ الميلاد</label><input id="p-birth" type="date" dir="ltr"></div>
+    </div>
+    <label for="p-gender">الجنس</label>
+    <select id="p-gender"><option value="">غير محدد</option><option value="male">ذكر</option><option value="female">أنثى</option></select>
+    <button id="do-patient">حفظ المريض</button>
+    <h2 style="margin-top:18px">المرضى</h2>
+    <input id="q" placeholder="ابحث بالاسم أو الهاتف أو رقم الملف">
+    <table><thead><tr><th>الملف</th><th>الاسم</th><th>الهاتف</th></tr></thead><tbody id="patients"></tbody></table>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let session = JSON.parse(sessionStorage.getItem('session') || 'null');
+
+function say(text, kind = '') { const m = $('msg'); m.textContent = text; m.className = kind; }
+
+async function api(path, { method = 'GET', body } = {}) {
+  const res = await fetch(path, {
+    method,
+    headers: { 'content-type': 'application/json', ...(session ? { authorization: 'Bearer ' + session.token } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && session) { logout(); say('انتهت الجلسة. سجّل الدخول مرة أخرى', 'err'); }
+  if (!res.ok) throw new Error(data.error || 'حدث خطأ غير متوقع');
+  return data;
+}
+
+const roleNames = { platform_admin: 'مدير المنصة', admin: 'مدير المستشفى', doctor: 'طبيب', reception: 'استقبال', accountant: 'محاسب' };
+
+function render() {
+  const on = !!session;
+  $('s-login').hidden = on; $('setup-link').hidden = on; $('logout').hidden = !on;
+  if (on) $('s-setup').hidden = true;
+  $('s-platform').hidden = !(on && session.user.role === 'platform_admin');
+  $('s-patients').hidden = !(on && session.tenant);
+  $('who').textContent = on ? `${session.user.name} · ${roleNames[session.user.role]}${session.tenant ? ' · ' + session.tenant.name : ''}` : 'لم تسجل الدخول';
+  if (on && session.user.role === 'platform_admin') loadTenants();
+  if (on && session.tenant) loadPatients();
+}
+
+function logout() { session = null; sessionStorage.removeItem('session'); render(); }
+
+$('logout').onclick = logout;
+$('toggle-setup').onclick = () => { $('s-setup').hidden = !$('s-setup').hidden; };
+
+$('do-login').onclick = async () => {
+  try {
+    session = await api('/api/auth/login', { method: 'POST', body: { slug: $('slug').value, email: $('email').value, password: $('password').value } });
+    sessionStorage.setItem('session', JSON.stringify(session));
+    $('password').value = ''; say('تم تسجيل الدخول', 'ok'); render();
+  } catch (e) { say(e.message, 'err'); }
+};
+
+$('do-setup').onclick = async () => {
+  try {
+    await api('/api/setup', { method: 'POST', body: { key: $('su-key').value, name: $('su-name').value, email: $('su-email').value, password: $('su-pass').value } });
+    say('تم إنشاء مدير المنصة. سجل الدخول برمز platform', 'ok'); $('s-setup').hidden = true; $('slug').value = 'platform'; $('email').value = $('su-email').value;
+  } catch (e) { say(e.message, 'err'); }
+};
+
+async function loadTenants() {
+  try {
+    const { tenants } = await api('/api/platform/tenants');
+    $('tenants').innerHTML = tenants.map((t) => `<tr><td>${esc(t.name)}</td><td dir="ltr">${esc(t.slug)}</td><td>${t.status === 'active' ? 'فعّال' : 'موقوف'}</td></tr>`).join('') || '<tr><td colspan="3">لا توجد مستشفيات بعد. أضف أول مستشفى من النموذج أعلاه</td></tr>';
+  } catch (e) { say(e.message, 'err'); }
+}
+
+$('do-tenant').onclick = async () => {
+  try {
+    await api('/api/platform/tenants', { method: 'POST', body: { name: $('t-name').value, slug: $('t-slug').value, admin_name: $('t-aname').value, admin_email: $('t-aemail').value, admin_password: $('t-apass').value } });
+    say('تمت إضافة المستشفى', 'ok'); ['t-name','t-slug','t-aname','t-aemail','t-apass'].forEach((i) => ($(i).value = '')); loadTenants();
+  } catch (e) { say(e.message, 'err'); }
+};
+
+async function loadPatients() {
+  try {
+    const { patients } = await api('/api/patients?q=' + encodeURIComponent($('q').value));
+    $('patients').innerHTML = patients.map((p) => `<tr><td dir="ltr">${esc(p.file_no)}</td><td>${esc(p.full_name)}</td><td dir="ltr">${esc(p.phone || '')}</td></tr>`).join('') || '<tr><td colspan="3">لا يوجد مرضى. سجّل أول مريض من النموذج أعلاه</td></tr>';
+  } catch (e) { say(e.message, 'err'); }
+}
+
+$('do-patient').onclick = async () => {
+  try {
+    const r = await api('/api/patients', { method: 'POST', body: { full_name: $('p-name').value, phone: $('p-phone').value, birth_date: $('p-birth').value, gender: $('p-gender').value } });
+    say('تم حفظ المريض، رقم الملف ' + r.file_no, 'ok'); ['p-name','p-phone','p-birth','p-gender'].forEach((i) => ($(i).value = '')); loadPatients();
+  } catch (e) { say(e.message, 'err'); }
+};
+
+let timer; $('q').oninput = () => { clearTimeout(timer); timer = setTimeout(loadPatients, 300); };
+function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+
+render();
+</script>
+</body>
+</html>
