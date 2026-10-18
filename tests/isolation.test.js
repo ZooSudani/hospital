@@ -7,6 +7,8 @@ import { onRequestPost as login } from '../functions/api/auth/login.js';
 import { onRequestGet as listTenants, onRequestPost as createTenant } from '../functions/api/platform/tenants.js';
 import { onRequestGet as listPatients, onRequestPost as addPatient } from '../functions/api/patients/index.js';
 import { onRequestGet as getPatient } from '../functions/api/patients/[id].js';
+import { onRequestGet as listStaff, onRequestPost as addStaff } from '../functions/api/staff/index.js';
+import { onRequestPatch as patchStaff } from '../functions/api/staff/[id].js';
 
 const env = { DB: makeDb(), JWT_SECRET: 'test-secret', SETUP_KEY: 'k' };
 const call = async (handler, { path = '/api/x', method = 'GET', body, token, params = {} } = {}) => {
@@ -92,3 +94,56 @@ assert.equal((await call(login, { path: '/api/auth/login', method: 'POST', body:
 assert.equal((await call(listPatients, { token: 'garbage' })).status, 401);
 
 console.log('isolation: كل الاختبارات نجحت (9 مجموعات)');
+
+// ===== إدارة الموظفين (قبل إيقاف المستشفى في المجموعة 8 نعيد تفعيله) =====
+raw.prepare(`UPDATE tenants SET status = 'active' WHERE slug = 'alnoor'`).run();
+
+// 10) إضافة موظفين
+const mk = (token, body) => call(addStaff, { path: '/api/staff', method: 'POST', token, body });
+r = await mk(noor, { name: 'د. هالة', email: 'hala@alnoor.com', password: 'doctor1234', role: 'doctor' });
+assert.equal(r.status, 201);
+const doctorNoorId = r.body.id;
+r = await mk(noor, { name: 'ريم', email: 'reem@alnoor.com', password: 'recept1234', role: 'reception' });
+assert.equal(r.status, 201);
+assert.equal((await mk(noor, { name: 'مكرر', email: 'HALA@alnoor.com', password: 'doctor1234', role: 'doctor' })).status, 409, 'بريد مكرر في نفس المستشفى');
+assert.equal((await mk(amal, { name: 'د. هالة', email: 'hala@alnoor.com', password: 'doctor1234', role: 'doctor' })).status, 201, 'نفس البريد مسموح في مستشفى آخر');
+assert.equal((await mk(noor, { name: 'x', email: 'bad', password: '123', role: 'god' })).status, 400);
+assert.equal((await mk(noor, { name: 'مدير منصة', email: 'p@x.com', password: 'password123', role: 'platform_admin' })).status, 400, 'لا يمكن إنشاء مدير منصة من مستشفى');
+
+// 11) الصلاحيات: غير المدير لا يدير الموظفين
+const doctorToken = (await call(login, { path: '/api/auth/login', method: 'POST', body: { slug: 'alnoor', email: 'hala@alnoor.com', password: 'doctor1234' } })).body.token;
+assert.equal((await call(listStaff, { token: doctorToken })).status, 403);
+assert.equal((await mk(doctorToken, { name: 'س', email: 's@x.com', password: 'password123', role: 'admin' })).status, 403, 'الطبيب لا يستطيع ترقية نفسه أو إضافة مديرين');
+assert.equal((await call(addPatient, { method: 'POST', token: doctorToken, body: { full_name: 'مريض الطبيب' } })).status, 201, 'الطبيب يسجل المرضى');
+
+// 12) عزل الموظفين بين المستشفيات
+assert.equal((await call(listStaff, { token: noor })).body.staff.length, 3);
+assert.equal((await call(listStaff, { token: amal })).body.staff.length, 2);
+r = await call(patchStaff, { method: 'PATCH', token: amal, params: { id: doctorNoorId }, body: { active: false } });
+assert.equal(r.status, 404, 'مدير الأمل لا يعدّل موظف النور');
+assert.equal((await call(listPatients, { token: doctorToken })).status, 200, 'طبيب النور ما زال فعّالًا');
+
+// 13) تعطيل الموظف يقطع وصوله فورًا، وإعادة تفعيله تعيده
+r = await call(patchStaff, { method: 'PATCH', token: noor, params: { id: doctorNoorId }, body: { active: false } });
+assert.equal(r.status, 200);
+assert.equal((await call(listPatients, { token: doctorToken })).status, 403, 'التوكن القديم يتوقف فورًا');
+assert.equal((await call(login, { path: '/api/auth/login', method: 'POST', body: { slug: 'alnoor', email: 'hala@alnoor.com', password: 'doctor1234' } })).status, 401, 'لا دخول جديد للموقوف');
+await call(patchStaff, { method: 'PATCH', token: noor, params: { id: doctorNoorId }, body: { active: true } });
+assert.equal((await call(listPatients, { token: doctorToken })).status, 200);
+
+// 14) تغيير الدور يسري فورًا (طبيب إلى محاسب: يقرأ ولا يكتب)
+await call(patchStaff, { method: 'PATCH', token: noor, params: { id: doctorNoorId }, body: { role: 'accountant' } });
+assert.equal((await call(addPatient, { method: 'POST', token: doctorToken, body: { full_name: 'مريض آخر' } })).status, 403);
+assert.equal((await call(listPatients, { token: doctorToken })).status, 200);
+
+// 15) إعادة تعيين كلمة المرور
+await call(patchStaff, { method: 'PATCH', token: noor, params: { id: doctorNoorId }, body: { password: 'newpass9999' } });
+assert.equal((await call(login, { path: '/api/auth/login', method: 'POST', body: { slug: 'alnoor', email: 'hala@alnoor.com', password: 'doctor1234' } })).status, 401);
+assert.equal((await call(login, { path: '/api/auth/login', method: 'POST', body: { slug: 'alnoor', email: 'hala@alnoor.com', password: 'newpass9999' } })).status, 200);
+
+// 16) المدير لا يوقف نفسه ولا يغيّر دوره
+const adminNoorId = (await call(listStaff, { token: noor })).body.staff.find((u) => u.email === 'admin@alnoor.com').id;
+assert.equal((await call(patchStaff, { method: 'PATCH', token: noor, params: { id: adminNoorId }, body: { active: false } })).status, 400);
+assert.equal((await call(patchStaff, { method: 'PATCH', token: noor, params: { id: adminNoorId }, body: { role: 'doctor' } })).status, 400);
+
+console.log('staff: كل الاختبارات نجحت (7 مجموعات)');
