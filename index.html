@@ -25,7 +25,8 @@
   table { width:100%; border-collapse:collapse; font-size:14px; margin-top:8px; }
   th, td { text-align:right; padding:8px 6px; border-bottom:1px solid var(--line); }
   th { color:var(--muted); font-weight:600; }
-  .row { display:flex; gap:8px; } .row > * { flex:1; }
+    .row { display:flex; gap:8px; } .row > * { flex:1; min-width:0; }
+  input[type=date] { min-width:0; -webkit-appearance:none; appearance:none; height:44px; text-align:right; }
   button.mini { margin:0 0 0 4px; padding:4px 10px; font-size:13px; background:#fff; color:var(--navy); border:1px solid var(--line); }
   .off td { color:var(--muted); }
   [hidden] { display:none !important; }
