@@ -26,6 +26,8 @@
   th, td { text-align:right; padding:8px 6px; border-bottom:1px solid var(--line); }
   th { color:var(--muted); font-weight:600; }
   .row { display:flex; gap:8px; } .row > * { flex:1; }
+  button.mini { margin:0 0 0 4px; padding:4px 10px; font-size:13px; background:#fff; color:var(--navy); border:1px solid var(--line); }
+  .off td { color:var(--muted); }
   [hidden] { display:none !important; }
 </style>
 </head>
@@ -84,6 +86,18 @@
     <input id="q" placeholder="ابحث بالاسم أو الهاتف أو رقم الملف">
     <table><thead><tr><th>الملف</th><th>الاسم</th><th>الهاتف</th></tr></thead><tbody id="patients"></tbody></table>
   </section>
+
+  <section id="s-staff" hidden>
+    <h2>إضافة موظف</h2>
+    <label for="st-name">الاسم</label><input id="st-name">
+    <label for="st-email">البريد الإلكتروني</label><input id="st-email" type="email" dir="ltr">
+    <label for="st-pass">كلمة المرور (8 أحرف على الأقل)</label><input id="st-pass" type="password" dir="ltr">
+    <label for="st-role">الدور</label>
+    <select id="st-role"><option value="doctor">طبيب</option><option value="reception">استقبال</option><option value="accountant">محاسب</option><option value="admin">مدير مستشفى</option></select>
+    <button id="do-staff">إضافة الموظف</button>
+    <h2 style="margin-top:18px">الموظفون</h2>
+    <table><thead><tr><th>الاسم</th><th>الدور</th><th></th></tr></thead><tbody id="staff"></tbody></table>
+  </section>
 </main>
 
 <script>
@@ -112,9 +126,11 @@ function render() {
   if (on) $('s-setup').hidden = true;
   $('s-platform').hidden = !(on && session.user.role === 'platform_admin');
   $('s-patients').hidden = !(on && session.tenant);
+  $('s-staff').hidden = !(on && session.tenant && session.user.role === 'admin');
   $('who').textContent = on ? `${session.user.name} · ${roleNames[session.user.role]}${session.tenant ? ' · ' + session.tenant.name : ''}` : 'لم تسجل الدخول';
   if (on && session.user.role === 'platform_admin') loadTenants();
   if (on && session.tenant) loadPatients();
+  if (on && session.tenant && session.user.role === 'admin') loadStaff();
 }
 
 function logout() { session = null; sessionStorage.removeItem('session'); render(); }
@@ -133,7 +149,7 @@ $('do-login').onclick = async () => {
 $('do-setup').onclick = async () => {
   try {
     await api('/api/setup', { method: 'POST', body: { key: $('su-key').value, name: $('su-name').value, email: $('su-email').value, password: $('su-pass').value } });
-    say('تم إنشاء مدير المنصة. سجل الدخول برمز platform', 'ok'); $('s-setup').hidden = true; $('slug').value = 'platform'; $('email').value = $('su-email').value;
+    say('تم إنشاء مدير المنصة. سجّل الدخول برمز platform', 'ok'); $('s-setup').hidden = true; $('slug').value = 'platform'; $('email').value = $('su-email').value;
   } catch (e) { say(e.message, 'err'); }
 };
 
@@ -167,6 +183,41 @@ $('do-patient').onclick = async () => {
 
 let timer; $('q').oninput = () => { clearTimeout(timer); timer = setTimeout(loadPatients, 300); };
 function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+
+async function loadStaff() {
+  try {
+    const { staff } = await api('/api/staff');
+    $('staff').innerHTML = staff.map((u) => {
+      const me = u.id === session.user.id;
+      const actions = me ? '<small>حسابك</small>' :
+        `<button class="mini" data-act="toggle" data-id="${esc(u.id)}" data-active="${u.active}">${u.active ? 'إيقاف' : 'تفعيل'}</button><button class="mini" data-act="pass" data-id="${esc(u.id)}">كلمة مرور</button>`;
+      return `<tr class="${u.active ? '' : 'off'}"><td>${esc(u.name)}<br><small dir="ltr">${esc(u.email)}</small></td><td>${roleNames[u.role] || esc(u.role)}${u.active ? '' : ' (موقوف)'}</td><td>${actions}</td></tr>`;
+    }).join('');
+  } catch (e) { say(e.message, 'err'); }
+}
+
+$('do-staff').onclick = async () => {
+  try {
+    await api('/api/staff', { method: 'POST', body: { name: $('st-name').value, email: $('st-email').value, password: $('st-pass').value, role: $('st-role').value } });
+    say('تمت إضافة الموظف', 'ok'); ['st-name','st-email','st-pass'].forEach((i) => ($(i).value = '')); loadStaff();
+  } catch (e) { say(e.message, 'err'); }
+};
+
+$('staff').onclick = async (ev) => {
+  const b = ev.target.closest('button'); if (!b) return;
+  try {
+    if (b.dataset.act === 'toggle') {
+      await api('/api/staff/' + b.dataset.id, { method: 'PATCH', body: { active: b.dataset.active !== '1' } });
+      say('تم تحديث الحالة', 'ok');
+    } else if (b.dataset.act === 'pass') {
+      const pw = prompt('كلمة المرور الجديدة (8 أحرف على الأقل)');
+      if (!pw) return;
+      await api('/api/staff/' + b.dataset.id, { method: 'PATCH', body: { password: pw } });
+      say('تم تغيير كلمة المرور', 'ok');
+    }
+    loadStaff();
+  } catch (e) { say(e.message, 'err'); }
+};
 
 render();
 </script>
