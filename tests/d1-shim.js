@@ -2,9 +2,9 @@
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 
-export function makeDb() {
+export function makeDb(schema) {
   const sqlite = new DatabaseSync(':memory:');
-  sqlite.exec(readFileSync(new URL('../schema/shared.sql', import.meta.url), 'utf8'));
+  sqlite.exec(schema ?? readFileSync(new URL('../schema/shared.sql', import.meta.url), 'utf8'));
   const stmt = (sql, args = []) => ({
     bind: (...a) => stmt(sql, a),
     async first() { return sqlite.prepare(sql).get(...args) ?? null; },
