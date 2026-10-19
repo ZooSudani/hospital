@@ -25,7 +25,7 @@
   table { width:100%; border-collapse:collapse; font-size:14px; margin-top:8px; }
   th, td { text-align:right; padding:8px 6px; border-bottom:1px solid var(--line); }
   th { color:var(--muted); font-weight:600; }
-    .row { display:flex; gap:8px; } .row > * { flex:1; min-width:0; }
+  .row { display:flex; gap:8px; } .row > * { flex:1; min-width:0; }
   input[type=date] { min-width:0; -webkit-appearance:none; appearance:none; height:44px; text-align:right; }
   button.mini { margin:0 0 0 4px; padding:4px 10px; font-size:13px; background:#fff; color:var(--navy); border:1px solid var(--line); }
   .off td { color:var(--muted); }
@@ -74,7 +74,7 @@
   </section>
 
   <section id="s-patients" hidden>
-    <h2>تسجيل مريض</h2>
+    <div id="p-form"><h2>تسجيل مريض</h2>
     <label for="p-name">الاسم الكامل</label><input id="p-name">
     <div class="row">
       <div><label for="p-phone">الهاتف</label><input id="p-phone" inputmode="tel" dir="ltr"></div>
@@ -82,10 +82,27 @@
     </div>
     <label for="p-gender">الجنس</label>
     <select id="p-gender"><option value="">غير محدد</option><option value="male">ذكر</option><option value="female">أنثى</option></select>
-    <button id="do-patient">حفظ المريض</button>
+    <button id="do-patient">حفظ المريض</button></div>
     <h2 style="margin-top:18px">المرضى</h2>
     <input id="q" placeholder="ابحث بالاسم أو الهاتف أو رقم الملف">
     <table><thead><tr><th>الملف</th><th>الاسم</th><th>الهاتف</th></tr></thead><tbody id="patients"></tbody></table>
+  </section>
+
+  <section id="s-appts" hidden>
+    <div id="a-form">
+      <h2>حجز موعد</h2>
+      <label for="a-patient">المريض</label><select id="a-patient"></select>
+      <label for="a-doctor">الطبيب</label><select id="a-doctor"></select>
+      <div class="row">
+        <div><label for="a-date">التاريخ</label><input id="a-date" type="date" dir="ltr"></div>
+        <div><label for="a-time">الوقت</label><select id="a-time" dir="ltr"></select></div>
+      </div>
+      <label for="a-reason">سبب الزيارة (اختياري)</label><input id="a-reason">
+      <button id="do-appt">حجز الموعد</button>
+    </div>
+    <h2 style="margin-top:18px">المواعيد</h2>
+    <label for="a-day">اليوم</label><input id="a-day" type="date" dir="ltr">
+    <table><thead><tr><th>الوقت</th><th>المريض والطبيب</th><th></th></tr></thead><tbody id="appts"></tbody></table>
   </section>
 
   <section id="s-staff" hidden>
@@ -126,12 +143,18 @@ function render() {
   $('s-login').hidden = on; $('setup-link').hidden = on; $('logout').hidden = !on;
   if (on) $('s-setup').hidden = true;
   $('s-platform').hidden = !(on && session.user.role === 'platform_admin');
+  const role = on ? session.user.role : '';
   $('s-patients').hidden = !(on && session.tenant);
+  $('p-form').hidden = !['admin', 'doctor', 'reception'].includes(role);
+  $('s-appts').hidden = !(on && session.tenant && ['admin', 'reception', 'doctor'].includes(role));
+  $('a-form').hidden = !['admin', 'reception'].includes(role);
   $('s-staff').hidden = !(on && session.tenant && session.user.role === 'admin');
   $('who').textContent = on ? `${session.user.name} · ${roleNames[session.user.role]}${session.tenant ? ' · ' + session.tenant.name : ''}` : 'لم تسجل الدخول';
   if (on && session.user.role === 'platform_admin') loadTenants();
   if (on && session.tenant) loadPatients();
   if (on && session.tenant && session.user.role === 'admin') loadStaff();
+  if (!$('s-appts').hidden) { initApptDates(); loadAppts(); }
+  if (!$('a-form').hidden) loadApptForm();
 }
 
 function logout() { session = null; sessionStorage.removeItem('session'); render(); }
@@ -178,7 +201,7 @@ async function loadPatients() {
 $('do-patient').onclick = async () => {
   try {
     const r = await api('/api/patients', { method: 'POST', body: { full_name: $('p-name').value, phone: $('p-phone').value, birth_date: $('p-birth').value, gender: $('p-gender').value } });
-    say('تم حفظ المريض، رقم الملف ' + r.file_no, 'ok'); ['p-name','p-phone','p-birth','p-gender'].forEach((i) => ($(i).value = '')); loadPatients();
+    say('تم حفظ المريض، رقم الملف ' + r.file_no, 'ok'); ['p-name','p-phone','p-birth','p-gender'].forEach((i) => ($(i).value = '')); loadPatients(); if (!$('a-form').hidden) loadApptForm();
   } catch (e) { say(e.message, 'err'); }
 };
 
@@ -217,6 +240,64 @@ $('staff').onclick = async (ev) => {
       say('تم تغيير كلمة المرور', 'ok');
     }
     loadStaff();
+  } catch (e) { say(e.message, 'err'); }
+};
+
+// ===== المواعيد =====
+const statusNames = { scheduled: 'محجوز', done: 'تمت', cancelled: 'ملغي', no_show: 'لم يحضر' };
+const todayKhartoum = () => new Date(Date.now() + 2 * 3600 * 1000).toISOString().slice(0, 10);
+
+function initApptDates() {
+  if (!$('a-day').value) $('a-day').value = todayKhartoum();
+  if (!$('a-date').value) $('a-date').value = todayKhartoum();
+  if (!$('a-time').options.length) {
+    for (let h = 7; h < 22; h++) for (const m of ['00', '15', '30', '45']) {
+      const t = String(h).padStart(2, '0') + ':' + m;
+      $('a-time').add(new Option(t, t));
+    }
+    $('a-time').value = '09:00';
+  }
+}
+
+async function loadApptForm() {
+  try {
+    const [{ patients }, { doctors }] = await Promise.all([api('/api/patients'), api('/api/staff?role=doctor')]);
+    const keepP = $('a-patient').value, keepD = $('a-doctor').value;
+    $('a-patient').innerHTML = patients.length ? patients.map((p) => `<option value="${esc(p.id)}">${esc(p.full_name)} (ملف ${esc(p.file_no)})</option>`).join('') : '<option value="">لا يوجد مرضى بعد</option>';
+    $('a-doctor').innerHTML = doctors.length ? doctors.map((d) => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('') : '<option value="">أضف طبيبًا أولًا من قسم الموظفين</option>';
+    if (keepP) $('a-patient').value = keepP; if (keepD) $('a-doctor').value = keepD;
+  } catch (e) { say(e.message, 'err'); }
+}
+
+async function loadAppts() {
+  try {
+    const { appointments } = await api('/api/appointments?date=' + encodeURIComponent($('a-day').value));
+    const role = session.user.role;
+    $('appts').innerHTML = appointments.map((a) => {
+      let actions = '';
+      if (a.status === 'scheduled') {
+        actions = `<button class="mini" data-st="done" data-id="${esc(a.id)}">تمت</button><button class="mini" data-st="no_show" data-id="${esc(a.id)}">لم يحضر</button>`;
+        if (role !== 'doctor') actions += `<button class="mini" data-st="cancelled" data-id="${esc(a.id)}">إلغاء</button>`;
+      } else actions = `<small>${statusNames[a.status]}</small>`;
+      return `<tr class="${a.status === 'scheduled' ? '' : 'off'}"><td dir="ltr">${esc(a.starts_at.slice(11))}</td><td>${esc(a.patient_name)}<br><small>${esc(a.doctor_name)}${a.reason ? ' · ' + esc(a.reason) : ''}</small></td><td>${actions}</td></tr>`;
+    }).join('') || '<tr><td colspan="3">لا توجد مواعيد في هذا اليوم</td></tr>';
+  } catch (e) { say(e.message, 'err'); }
+}
+
+$('a-day').onchange = loadAppts;
+
+$('do-appt').onclick = async () => {
+  try {
+    await api('/api/appointments', { method: 'POST', body: { patient_id: $('a-patient').value, doctor_id: $('a-doctor').value, starts_at: $('a-date').value + ' ' + $('a-time').value, reason: $('a-reason').value } });
+    say('تم حجز الموعد', 'ok'); $('a-reason').value = ''; $('a-day').value = $('a-date').value; loadAppts();
+  } catch (e) { say(e.message, 'err'); }
+};
+
+$('appts').onclick = async (ev) => {
+  const b = ev.target.closest('button'); if (!b) return;
+  try {
+    await api('/api/appointments/' + b.dataset.id, { method: 'PATCH', body: { status: b.dataset.st } });
+    say('تم تحديث الموعد', 'ok'); loadAppts();
   } catch (e) { say(e.message, 'err'); }
 };
 
