@@ -4,10 +4,14 @@ import { repoFor } from '../../../lib/repo.js';
 
 const STAFF_ROLES = ['admin', 'doctor', 'reception', 'accountant'];
 
-export async function onRequestGet({ env, data }) {
+export async function onRequestGet({ request, env, data }) {
+  // قائمة مختصرة بالأطباء الفعّالين (اسم ومعرّف فقط) لحجز المواعيد
+  if (new URL(request.url).searchParams.get('role') === 'doctor') {
+    if (!can(data.auth, 'admin', 'reception')) return fail(403, 'غير مسموح');
+    return json({ doctors: await repoFor(env, data.auth).staff.listDoctors() });
+  }
   if (!can(data.auth, 'admin')) return fail(403, 'لمدير المستشفى فقط');
-  const staff = await repoFor(env, data.auth).staff.list();
-  return json({ staff });
+  return json({ staff: await repoFor(env, data.auth).staff.list() });
 }
 
 export async function onRequestPost({ request, env, data }) {
