@@ -28,5 +28,11 @@ export async function onRequest({ request, env, next, data }) {
   } else {
     data.auth = { uid: claims.sub, tid: null, role: claims.role };
   }
-  return next();
+  try {
+    return await next();
+  } catch (e) {
+    // خطأ الحارس (IsolationError) يعني خللًا برمجيًا في الاستعلام، فيُسجَّل ولا تُكشف تفاصيله للمستخدم
+    console.error('request failed', e?.code || '', e?.message || e);
+    return fail(500, 'خطأ داخلي في الخادم');
+  }
 }
