@@ -9,6 +9,8 @@ import { onRequestGet as listPatients, onRequestPost as addPatient } from '../fu
 import { onRequestGet as getPatient } from '../functions/api/patients/[id].js';
 import { onRequestGet as listStaff, onRequestPost as addStaff } from '../functions/api/staff/index.js';
 import { onRequestPatch as patchStaff } from '../functions/api/staff/[id].js';
+import { onRequestGet as listAppts, onRequestPost as addAppt } from '../functions/api/appointments/index.js';
+import { onRequestPatch as patchAppt } from '../functions/api/appointments/[id].js';
 
 const env = { DB: makeDb(), JWT_SECRET: 'test-secret', SETUP_KEY: 'k' };
 const call = async (handler, { path = '/api/x', method = 'GET', body, token, params = {} } = {}) => {
@@ -147,3 +149,66 @@ assert.equal((await call(patchStaff, { method: 'PATCH', token: noor, params: { i
 assert.equal((await call(patchStaff, { method: 'PATCH', token: noor, params: { id: adminNoorId }, body: { role: 'doctor' } })).status, 400);
 
 console.log('staff: كل الاختبارات نجحت (7 مجموعات)');
+
+// ===== المواعيد =====
+const loginAs = async (slug, email, password) =>
+  (await call(login, { path: '/api/auth/login', method: 'POST', body: { slug, email, password } })).body.token;
+
+// طبيبان جديدان في النور، وطبيب في الأمل
+const dr1 = (await mk(noor, { name: 'د. مازن', email: 'mazin@alnoor.com', password: 'doctor1234', role: 'doctor' })).body.id;
+const dr2 = (await mk(noor, { name: 'د. سلمى', email: 'salma@alnoor.com', password: 'doctor1234', role: 'doctor' })).body.id;
+const drAmal = (await mk(amal, { name: 'د. أمل', email: 'dr@alamal.com', password: 'doctor1234', role: 'doctor' })).body.id;
+const reception = await loginAs('alnoor', 'reem@alnoor.com', 'recept1234');
+const doc1Token = await loginAs('alnoor', 'mazin@alnoor.com', 'doctor1234');
+const doc2Token = await loginAs('alnoor', 'salma@alnoor.com', 'doctor1234');
+const book = (token, b) => call(addAppt, { path: '/api/appointments', method: 'POST', token, body: b });
+const day = '2026-11-02';
+
+// 17) حجز ناجح، ثم منع الحجز المزدوج على مستوى القاعدة
+r = await book(reception, { patient_id: p1.id, doctor_id: dr1, starts_at: `${day}T10:00` });
+assert.equal(r.status, 201, JSON.stringify(r.body));
+const apptId = r.body.id;
+assert.equal((await book(reception, { patient_id: p2.id, doctor_id: dr1, starts_at: `${day} 10:00` })).status, 409, 'نفس الطبيب ونفس الوقت');
+assert.equal((await book(reception, { patient_id: p2.id, doctor_id: dr2, starts_at: `${day} 10:00` })).status, 201, 'طبيب آخر في نفس الوقت مسموح');
+assert.equal((await book(reception, { patient_id: p2.id, doctor_id: dr1, starts_at: `${day} 10:15` })).status, 201, 'وقت آخر لنفس الطبيب مسموح');
+
+// 18) التحقق من المدخلات
+assert.equal((await book(reception, { patient_id: p1.id, doctor_id: dr1, starts_at: `${day} 10:07` })).status, 400, 'دقائق غير مسموحة');
+assert.equal((await book(reception, { patient_id: p1.id, doctor_id: dr1, starts_at: 'غد' })).status, 400);
+assert.equal((await book(reception, { patient_id: p1.id, doctor_id: dr1, starts_at: '2026-02-31 10:00' })).status, 400, 'تاريخ غير موجود');
+assert.equal((await book(reception, { patient_id: 'nope', doctor_id: dr1, starts_at: `${day} 11:00` })).status, 400);
+assert.equal((await book(reception, { patient_id: p1.id, doctor_id: adminNoorId, starts_at: `${day} 11:00` })).status, 400, 'الموعد لا يُحجز عند غير الأطباء');
+
+// 19) العزل: لا مريض ولا طبيب من مستشفى آخر
+assert.equal((await book(reception, { patient_id: p3.id, doctor_id: dr1, starts_at: `${day} 12:00` })).status, 400, 'مريض الأمل');
+assert.equal((await book(reception, { patient_id: p1.id, doctor_id: drAmal, starts_at: `${day} 12:00` })).status, 400, 'طبيب الأمل');
+assert.equal((await call(listAppts, { path: `/api/appointments?date=${day}`, token: amal })).body.appointments.length, 0);
+assert.equal((await call(patchAppt, { method: 'PATCH', token: amal, params: { id: apptId }, body: { status: 'cancelled' } })).status, 404, 'مدير الأمل لا يلغي موعد النور');
+
+// 20) الصلاحيات: الطبيب لا يحجز، ويرى مواعيده فقط، والمحاسب لا يرى المواعيد
+assert.equal((await book(doc1Token, { patient_id: p1.id, doctor_id: dr1, starts_at: `${day} 13:00` })).status, 403);
+const listFor = async (token) => (await call(listAppts, { path: `/api/appointments?date=${day}`, token })).body.appointments;
+assert.equal((await listFor(reception)).length, 3);
+assert.equal((await listFor(doc1Token)).length, 2);
+assert.equal((await listFor(doc2Token)).length, 1);
+assert.ok((await listFor(doc2Token)).every((a) => a.doctor_id === dr2));
+assert.equal((await call(listAppts, { path: `/api/appointments?date=${day}`, token: doctorToken })).status, 403, 'المحاسب ممنوع');
+assert.equal((await call(listAppts, { path: '/api/appointments?date=bad', token: reception })).status, 400);
+
+// 21) تغيير الحالة: الطبيب لموعده فقط ولا يلغي، والإلغاء يحرر الوقت
+const doc2Appt = (await listFor(doc2Token))[0].id;
+assert.equal((await call(patchAppt, { method: 'PATCH', token: doc1Token, params: { id: doc2Appt }, body: { status: 'done' } })).status, 403, 'طبيب لا يعدّل موعد زميله');
+assert.equal((await call(patchAppt, { method: 'PATCH', token: doc1Token, params: { id: apptId }, body: { status: 'cancelled' } })).status, 403, 'الطبيب لا يلغي');
+assert.equal((await call(patchAppt, { method: 'PATCH', token: doc1Token, params: { id: apptId }, body: { status: 'done' } })).status, 200);
+assert.equal((await call(patchAppt, { method: 'PATCH', token: reception, params: { id: apptId }, body: { status: 'cancelled' } })).status, 409, 'موعد منتهٍ');
+assert.equal((await call(patchAppt, { method: 'PATCH', token: reception, params: { id: doc2Appt }, body: { status: 'cancelled' } })).status, 200);
+assert.equal((await book(reception, { patient_id: p1.id, doctor_id: dr2, starts_at: `${day} 10:00` })).status, 201, 'الوقت المُلغى يعود متاحًا');
+assert.equal((await book(reception, { patient_id: p2.id, doctor_id: dr1, starts_at: `${day} 10:00` })).status, 201, 'وقت موعد "تم" يعود متاحًا أيضًا');
+
+// 22) الحارس المركزي في الإنتاج: استعلام بلا tenant_id يُرفض قبل التنفيذ
+import { guardedExecutor, IsolationError } from '../lib/isolation/executors.js';
+const guarded = guardedExecutor(env.DB, tenantIds.alnoor);
+await assert.rejects(() => guarded({ kind: 'all', sql: 'SELECT id, tenant_id FROM patients', args: [] }), (e) => e instanceof IsolationError && e.code === 'missing-tenant-filter');
+await assert.rejects(() => guarded({ kind: 'all', sql: 'SELECT id, tenant_id FROM patients WHERE tenant_id = ? OR 1=1', args: [tenantIds.alamal] }), (e) => e.code === 'cross-tenant-row');
+
+console.log('appointments: كل الاختبارات نجحت (6 مجموعات)');
