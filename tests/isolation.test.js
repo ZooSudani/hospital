@@ -12,7 +12,7 @@ import { onRequestPatch as patchStaff } from '../functions/api/staff/[id].js';
 import { onRequestGet as listAppts, onRequestPost as addAppt } from '../functions/api/appointments/index.js';
 import { onRequestPatch as patchAppt } from '../functions/api/appointments/[id].js';
 
-const env = { DB: makeDb(), JWT_SECRET: 'test-secret', SETUP_KEY: 'k' };
+const env = { DB: makeDb(), JWT_SECRET: 'test-secret-'.padEnd(48, 'x'), SETUP_KEY: 'k' };
 const call = async (handler, { path = '/api/x', method = 'GET', body, token, params = {} } = {}) => {
   const request = new Request(`https://x.test${path}`, {
     method,
@@ -27,12 +27,12 @@ const call = async (handler, { path = '/api/x', method = 'GET', body, token, par
 // 1) إعداد المنصة
 let r = await call(setup, { path: '/api/setup', method: 'POST', body: { key: 'bad', email: 'a@b.c', name: 'مدير', password: '12345678' } });
 assert.equal(r.status, 403);
-r = await call(setup, { path: '/api/setup', method: 'POST', body: { key: 'k', email: 'root@x.com', name: 'مدير المنصة', password: 'rootpass123' } });
+r = await call(setup, { path: '/api/setup', method: 'POST', body: { key: 'k', email: 'root@x.com', name: 'مدير المنصة', password: 'Zebra-5521-kx' } });
 assert.equal(r.status, 201);
-r = await call(setup, { path: '/api/setup', method: 'POST', body: { key: 'k', email: 'root2@x.com', name: 'مدير', password: 'rootpass123' } });
+r = await call(setup, { path: '/api/setup', method: 'POST', body: { key: 'k', email: 'root2@x.com', name: 'مدير', password: 'Zebra-5521-kx' } });
 assert.equal(r.status, 409, 'لا يمكن إنشاء مدير منصة ثانٍ');
 
-const platform = (await call(login, { path: '/api/auth/login', method: 'POST', body: { slug: 'platform', email: 'root@x.com', password: 'rootpass123' } })).body.token;
+const platform = (await call(login, { path: '/api/auth/login', method: 'POST', body: { slug: 'platform', email: 'root@x.com', password: 'Zebra-5521-kx' } })).body.token;
 
 // 2) إنشاء مستشفيين
 for (const [slug, name] of [['alnoor', 'مستشفى النور'], ['alamal', 'مستشفى الأمل']]) {
@@ -110,13 +110,14 @@ assert.equal(r.status, 201);
 assert.equal((await mk(noor, { name: 'مكرر', email: 'HALA@alnoor.com', password: 'doctor1234', role: 'doctor' })).status, 409, 'بريد مكرر في نفس المستشفى');
 assert.equal((await mk(amal, { name: 'د. هالة', email: 'hala@alnoor.com', password: 'doctor1234', role: 'doctor' })).status, 201, 'نفس البريد مسموح في مستشفى آخر');
 assert.equal((await mk(noor, { name: 'x', email: 'bad', password: '123', role: 'god' })).status, 400);
-assert.equal((await mk(noor, { name: 'مدير منصة', email: 'p@x.com', password: 'password123', role: 'platform_admin' })).status, 400, 'لا يمكن إنشاء مدير منصة من مستشفى');
+assert.equal((await mk(noor, { name: 'مدير منصة', email: 'p@x.com', password: 'Str0ng-passw0rd', role: 'platform_admin' })).status, 400, 'لا يمكن إنشاء مدير منصة من مستشفى');
 
 // 11) الصلاحيات: غير المدير لا يدير الموظفين
 const doctorToken = (await call(login, { path: '/api/auth/login', method: 'POST', body: { slug: 'alnoor', email: 'hala@alnoor.com', password: 'doctor1234' } })).body.token;
 assert.equal((await call(listStaff, { token: doctorToken })).status, 403);
 assert.equal((await mk(doctorToken, { name: 'س', email: 's@x.com', password: 'password123', role: 'admin' })).status, 403, 'الطبيب لا يستطيع ترقية نفسه أو إضافة مديرين');
-assert.equal((await call(addPatient, { method: 'POST', token: doctorToken, body: { full_name: 'مريض الطبيب' } })).status, 201, 'الطبيب يسجل المرضى');
+assert.equal((await call(addPatient, { method: 'POST', token: doctorToken, body: { full_name: 'مريض الطبيب' } })).status, 403, 'الطبيب لا يسجل المرضى (قراءة فقط)');
+assert.equal((await call(listPatients, { token: doctorToken })).status, 200, 'لكنه يقرأ قائمة المرضى');
 
 // 12) عزل الموظفين بين المستشفيات
 assert.equal((await call(listStaff, { token: noor })).body.staff.length, 3);
@@ -134,14 +135,17 @@ await call(patchStaff, { method: 'PATCH', token: noor, params: { id: doctorNoorI
 assert.equal((await call(listPatients, { token: doctorToken })).status, 200);
 
 // 14) تغيير الدور يسري فورًا (طبيب إلى محاسب: يقرأ ولا يكتب)
+await call(patchStaff, { method: 'PATCH', token: noor, params: { id: doctorNoorId }, body: { role: 'reception' } });
+assert.equal((await call(addPatient, { method: 'POST', token: doctorToken, body: { full_name: 'مريض آخر' } })).status, 201, 'بعد الترقية للاستقبال يكتب فورًا بنفس التوكن');
 await call(patchStaff, { method: 'PATCH', token: noor, params: { id: doctorNoorId }, body: { role: 'accountant' } });
-assert.equal((await call(addPatient, { method: 'POST', token: doctorToken, body: { full_name: 'مريض آخر' } })).status, 403);
+assert.equal((await call(addPatient, { method: 'POST', token: doctorToken, body: { full_name: 'مريض ثالث' } })).status, 403, 'بعد التخفيض للمحاسب يُمنع فورًا');
 assert.equal((await call(listPatients, { token: doctorToken })).status, 200);
 
 // 15) إعادة تعيين كلمة المرور
 await call(patchStaff, { method: 'PATCH', token: noor, params: { id: doctorNoorId }, body: { password: 'newpass9999' } });
 assert.equal((await call(login, { path: '/api/auth/login', method: 'POST', body: { slug: 'alnoor', email: 'hala@alnoor.com', password: 'doctor1234' } })).status, 401);
 assert.equal((await call(login, { path: '/api/auth/login', method: 'POST', body: { slug: 'alnoor', email: 'hala@alnoor.com', password: 'newpass9999' } })).status, 200);
+assert.equal((await call(listPatients, { token: doctorToken })).status, 401, 'التوكن القديم يسقط فور تغيير كلمة المرور');
 
 // 16) المدير لا يوقف نفسه ولا يغيّر دوره
 const adminNoorId = (await call(listStaff, { token: noor })).body.staff.find((u) => u.email === 'admin@alnoor.com').id;
@@ -192,7 +196,8 @@ assert.equal((await listFor(reception)).length, 3);
 assert.equal((await listFor(doc1Token)).length, 2);
 assert.equal((await listFor(doc2Token)).length, 1);
 assert.ok((await listFor(doc2Token)).every((a) => a.doctor_id === dr2));
-assert.equal((await call(listAppts, { path: `/api/appointments?date=${day}`, token: doctorToken })).status, 403, 'المحاسب ممنوع');
+const accountantToken = await loginAs('alnoor', 'hala@alnoor.com', 'newpass9999');
+assert.equal((await call(listAppts, { path: `/api/appointments?date=${day}`, token: accountantToken })).status, 403, 'المحاسب ممنوع');
 assert.equal((await call(listAppts, { path: '/api/appointments?date=bad', token: reception })).status, 400);
 
 // 21) تغيير الحالة: الطبيب لموعده فقط ولا يلغي، والإلغاء يحرر الوقت
