@@ -12,20 +12,29 @@ import * as staff from '../../functions/api/staff/index.js';
 import * as staffOne from '../../functions/api/staff/[id].js';
 import * as appts from '../../functions/api/appointments/index.js';
 import * as apptOne from '../../functions/api/appointments/[id].js';
+import * as audit from '../../functions/api/audit.js';
 
-const env = { DB: makeDb(), JWT_SECRET: 'ui-test-secret', SETUP_KEY: 'ui-key' };
+const env = { DB: makeDb(), JWT_SECRET: 'ui-test-secret-'.padEnd(48, 'x'), SETUP_KEY: 'ui-key' };
 const routes = [
   [/^\/api\/setup$/, setup], [/^\/api\/auth\/login$/, login], [/^\/api\/platform\/tenants$/, tenants],
   [/^\/api\/patients$/, patients], [/^\/api\/patients\/([^/]+)$/, patient],
   [/^\/api\/staff$/, staff], [/^\/api\/staff\/([^/]+)$/, staffOne],
-  [/^\/api\/appointments$/, appts], [/^\/api\/appointments\/([^/]+)$/, apptOne],
+  [/^\/api\/appointments$/, appts], [/^\/api\/appointments\/([^/]+)$/, apptOne], [/^\/api\/audit$/, audit],
 ];
 
 http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   if (!url.pathname.startsWith('/api/')) {
-    res.setHeader('content-type', 'text/html; charset=utf-8');
-    return res.end(readFileSync(new URL('../../public/index.html', import.meta.url)));
+    // ملفات ثابتة مع رؤوس _headers نفسها التي ستطبقها Cloudflare Pages
+    const files = { '/': ['index.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'] };
+    const f = files[url.pathname];
+    if (!f) { res.writeHead(404); return res.end('not found'); }
+    const headers = { 'content-type': f[1] };
+    for (const line of readFileSync(new URL('../../public/_headers', import.meta.url), 'utf8').split('\n').slice(1)) {
+      const m = line.match(/^\s+([\w-]+):\s*(.+)$/); if (m) headers[m[1]] = m[2];
+    }
+    res.writeHead(200, headers);
+    return res.end(readFileSync(new URL('../../public/' + f[0], import.meta.url)));
   }
   const chunks = []; for await (const c of req) chunks.push(c);
   const body = chunks.length ? Buffer.concat(chunks) : undefined;
