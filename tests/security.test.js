@@ -11,6 +11,9 @@ import { onRequestGet as getPatient } from '../functions/api/patients/[id].js';
 import { onRequestPost as addStaff } from '../functions/api/staff/index.js';
 import { onRequestPatch as patchStaff } from '../functions/api/staff/[id].js';
 import { onRequestGet as listAudit } from '../functions/api/audit.js';
+import { onRequestGet as listTenants } from '../functions/api/platform/tenants.js';
+import { onRequestPatch as patchTenant } from '../functions/api/platform/tenants/[id].js';
+import { onRequestPost as changePassword } from '../functions/api/account/password.js';
 
 const SECRET = 'security-test-secret-'.padEnd(48, 'x');
 const env = { DB: makeDb(), JWT_SECRET: SECRET, SETUP_KEY: 'setup-key-1' };
@@ -156,3 +159,61 @@ assert.ok(!eventsAmal.some((e) => e.action === 'patient.create'), 'سجل مست
 assert.ok(raw.prepare(`SELECT COUNT(*) AS n FROM audit_log WHERE action = 'tenant.create'`).get().n === 2, 'إنشاء المستشفيات مسجَّل');
 
 console.log('security: كل الاختبارات نجحت (6 مجموعات)');
+
+// ===== 7) إدارة المستشفيات من المنصة =====
+const tenants = (await call(listTenants, { token: platform })).body.tenants;
+const alnoorT = tenants.find((t) => t.slug === 'alnoor');
+assert.equal(alnoorT.admin_email, 'admin@alnoor.com', 'قائمة المستشفيات تعرض بريد المدير');
+const patchT = (token, id, body) => call(patchTenant, { method: 'PATCH', token, params: { id }, body });
+assert.equal((await patchT(adminNoor, alnoorT.id, { status: 'suspended' })).status, 403, 'مدير مستشفى لا يوقف مستشفى');
+assert.equal((await patchT(reception, alnoorT.id, { status: 'suspended' })).status, 403);
+assert.equal((await patchT(platform, 'nope', { status: 'suspended' })).status, 404);
+assert.equal((await patchT(platform, alnoorT.id, { status: 'deleted' })).status, 400);
+assert.equal((await patchT(platform, alnoorT.id, {})).status, 400, 'طلب بلا تعديل');
+
+// إيقاف المستشفى يقطع الجميع ويمنع الدخول، وإعادة التفعيل تعيدهم
+assert.equal((await patchT(platform, alnoorT.id, { status: 'suspended' })).status, 200);
+assert.equal((await call(listPatients, { token: reception })).status, 403, 'موظفو مستشفى موقوف ممنوعون فورًا');
+assert.equal((await loginReq('alnoor', 'hala@alnoor.com', 'Brand-new-pass-1', '10.0.0.1')).status, 401, 'لا دخول لمستشفى موقوف');
+assert.equal((await patchT(platform, alnoorT.id, { status: 'active' })).status, 200);
+assert.equal((await call(listPatients, { token: reception })).status, 200);
+
+// إعادة تعيين كلمة مرور مدير المستشفى (حتى لو كان محظورًا بسبب محاولات فاشلة)
+for (let i = 0; i < 5; i++) await loginReq('alnoor', 'admin@alnoor.com', 'forgot-' + i, '10.0.0.2');
+assert.equal((await loginReq('alnoor', 'admin@alnoor.com', 'Hospital-8842', '10.0.0.3')).status, 429, 'المدير محظور مؤقتًا');
+assert.equal((await patchT(platform, alnoorT.id, { admin_password: 'weak' })).status, 400, 'سياسة كلمة المرور تنطبق');
+assert.equal((await patchT(platform, alnoorT.id, { admin_password: 'Reset-by-owner-3', admin_email: 'nobody@x.com' })).status, 404);
+r = await patchT(platform, alnoorT.id, { admin_password: 'Reset-by-owner-3' });
+assert.equal(r.status, 200); assert.equal(r.body.admin_email, 'admin@alnoor.com');
+assert.equal((await call(listPatients, { token: adminNoor })).status, 401, 'جلسة المدير القديمة سقطت');
+assert.equal((await loginReq('alnoor', 'admin@alnoor.com', 'Hospital-8842', '10.0.0.4')).status, 401, 'الكلمة القديمة لا تعمل');
+const adminNoor2 = (await loginReq('alnoor', 'admin@alnoor.com', 'Reset-by-owner-3', '10.0.0.4'));
+assert.equal(adminNoor2.status, 200, 'الكلمة الجديدة تعمل فورًا بلا انتظار انتهاء القفل');
+assert.ok((await call(listAudit, { token: adminNoor2.body.token })).body.events.some((e) => e.action === 'tenant.update'), 'العملية مسجَّلة');
+
+// ===== 8) تغيير المستخدم لكلمة مروره =====
+const chg = (token, current, next, ip) => call(changePassword, { path: '/api/account/password', method: 'POST', token, body: { current, next }, ip });
+const me = await tokenFor('omar@alnoor.com', '11.0.0.1');
+assert.equal((await chg(me, 'wrong-current', 'Another-pass-5501')).status, 400, 'الحالية خاطئة');
+assert.equal((await chg(me, 'Staff-pass-7731', 'Staff-pass-7731')).status, 400, 'الجديدة مطابقة للحالية');
+assert.equal((await chg(me, 'Staff-pass-7731', '12345678')).status, 400, 'الجديدة ضعيفة');
+assert.equal((await chg(me, 'Staff-pass-7731', 'omar-secret-2026')).status, 400, 'تحتوي بريده');
+assert.equal((await call(changePassword, { path: '/api/account/password', method: 'POST', token: me, body: {} })).status, 400);
+assert.equal((await call(changePassword, { path: '/api/account/password', method: 'POST', body: { current: 'a', next: 'b' } })).status, 401, 'بلا جلسة');
+r = await chg(me, 'Staff-pass-7731', 'Another-pass-5501');
+assert.equal(r.status, 200);
+assert.equal((await call(listPatients, { token: me })).status, 401, 'الجلسة القديمة سقطت');
+assert.equal((await call(listPatients, { token: r.body.token })).status, 200, 'الجلسة الجديدة تعمل');
+assert.equal((await loginReq('alnoor', 'omar@alnoor.com', 'Staff-pass-7731', '11.0.0.2')).status, 401);
+assert.equal((await loginReq('alnoor', 'omar@alnoor.com', 'Another-pass-5501', '11.0.0.2')).status, 200);
+// تخمين كلمة المرور الحالية عبر هذه النقطة يُقفل أيضًا (جلسة مسروقة لا تكفي)
+const stolen = r.body.token;
+for (let i = 0; i < 5; i++) await chg(stolen, 'guess-' + i, 'Whatever-pass-1234');
+assert.equal((await chg(stolen, 'Another-pass-5501', 'Whatever-pass-1234')).status, 429, 'قفل تخمين الكلمة الحالية');
+// مدير المنصة يغيّر كلمته أيضًا
+const p2 = await chg(platform, 'Zebra-5521-kx', 'Platform-new-pass-77', '12.0.0.1');
+assert.equal(p2.status, 200);
+assert.equal((await call(listTenants, { token: p2.body.token })).status, 200);
+assert.equal((await loginReq('platform', 'root@x.com', 'Platform-new-pass-77', '12.0.0.2')).status, 200);
+
+console.log('security (إدارة الحسابات): كل الاختبارات نجحت (2 مجموعتان)');
