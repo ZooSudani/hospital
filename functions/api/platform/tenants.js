@@ -1,10 +1,13 @@
-import { hashPassword } from '../../../lib/auth.js';
+import { hashPassword, passwordProblem } from '../../../lib/auth.js';
+import { auditRaw } from '../../../lib/audit.js';
 import { can, fail, json, readJson } from '../../../lib/http.js';
 
 export async function onRequestGet({ env, data }) {
   if (!can(data.auth, 'platform_admin')) return fail(403, 'للمدير العام للمنصة فقط');
   const { results } = await env.DB.prepare(
-    `SELECT id, name, slug, status, created_at FROM tenants ORDER BY created_at DESC`
+    `SELECT t.id, t.name, t.slug, t.status, t.created_at,
+            (SELECT u.email FROM users u WHERE u.tenant_id = t.id AND u.role = 'admin' ORDER BY u.created_at LIMIT 1) AS admin_email
+     FROM tenants t ORDER BY t.created_at DESC`
   ).all();
   return json({ tenants: results });
 }
@@ -24,9 +27,11 @@ export async function onRequestPost({ request, env, data }) {
   if (!/^[a-z0-9-]{3,30}$/.test(slug) || slug === 'platform') {
     return fail(400, 'رمز المستشفى: حروف إنجليزية صغيرة وأرقام وشرطة، من 3 إلى 30 خانة');
   }
-  if (!adminEmail.includes('@') || adminName.length < 2 || adminPassword.length < 8) {
-    return fail(400, 'بيانات مدير المستشفى غير مكتملة (كلمة المرور 8 أحرف على الأقل)');
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(adminEmail) || adminName.length < 2 || adminName.length > 80) {
+    return fail(400, 'اسم أو بريد مدير المستشفى غير صحيح');
   }
+  const problem = passwordProblem(adminPassword, adminEmail, adminName);
+  if (problem) return fail(400, problem);
 
   const tenantId = crypto.randomUUID();
   const passwordHash = await hashPassword(adminPassword);
@@ -41,5 +46,6 @@ export async function onRequestPost({ request, env, data }) {
     if (String(e).includes('UNIQUE')) return fail(409, 'رمز المستشفى مستخدم من قبل');
     throw e;
   }
+  await auditRaw(env.DB, { tenant_id: tenantId, user_id: data.auth.uid, action: 'tenant.create', target: slug, ip: data.auth.ip });
   return json({ id: tenantId, slug }, 201);
 }
