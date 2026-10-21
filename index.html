@@ -30,7 +30,7 @@
     <label for="su-key">مفتاح الإعداد (SETUP_KEY)</label><input id="su-key" type="password" dir="ltr">
     <label for="su-name">الاسم</label><input id="su-name">
     <label for="su-email">البريد</label><input id="su-email" type="email" dir="ltr">
-    <label for="su-pass">كلمة المرور (8 أحرف على الأقل)</label><input id="su-pass" type="password" dir="ltr">
+    <label for="su-pass">كلمة المرور (8 أحرف على الأقل)</label><input id="su-pass" type="password" autocomplete="new-password" dir="ltr">
     <button id="do-setup">إنشاء مدير المنصة</button>
   </section>
   <p id="setup-link" class="center" hidden><button class="line" id="toggle-setup">أول مرة؟ أنشئ مدير المنصة</button></p>
@@ -41,10 +41,10 @@
     <label for="t-slug">رمز المستشفى (إنجليزي صغير)</label><input id="t-slug" dir="ltr" autocapitalize="none">
     <label for="t-aname">اسم مدير المستشفى</label><input id="t-aname">
     <label for="t-aemail">بريد مدير المستشفى</label><input id="t-aemail" type="email" dir="ltr">
-    <label for="t-apass">كلمة مروره (8 أحرف على الأقل)</label><input id="t-apass" type="password" dir="ltr">
+    <label for="t-apass">كلمة مروره (8 أحرف على الأقل)</label><input id="t-apass" type="password" autocomplete="new-password" dir="ltr">
     <button id="do-tenant">إضافة المستشفى</button>
     <h2 class="mt">المستشفيات</h2>
-    <table><thead><tr><th>الاسم</th><th>الرمز</th><th>الحالة</th></tr></thead><tbody id="tenants"></tbody></table>
+    <table><thead><tr><th>المستشفى</th><th>الحالة</th><th></th></tr></thead><tbody id="tenants"></tbody></table>
   </section>
 
   <section id="s-patients" hidden>
@@ -83,12 +83,18 @@
     <h2>إضافة موظف</h2>
     <label for="st-name">الاسم</label><input id="st-name">
     <label for="st-email">البريد الإلكتروني</label><input id="st-email" type="email" dir="ltr">
-    <label for="st-pass">كلمة المرور (8 أحرف على الأقل)</label><input id="st-pass" type="password" dir="ltr">
+    <label for="st-pass">كلمة المرور (8 أحرف على الأقل)</label><input id="st-pass" type="password" autocomplete="new-password" dir="ltr">
     <label for="st-role">الدور</label>
     <select id="st-role"><option value="doctor">طبيب</option><option value="reception">استقبال</option><option value="accountant">محاسب</option><option value="admin">مدير مستشفى</option></select>
     <button id="do-staff">إضافة الموظف</button>
     <h2 class="mt">الموظفون</h2>
     <table><thead><tr><th>الاسم</th><th>الدور</th><th></th></tr></thead><tbody id="staff"></tbody></table>
+  </section>
+  <section id="s-account" hidden>
+    <h2>تغيير كلمة مروري</h2>
+    <label for="acc-current">كلمة المرور الحالية</label><input id="acc-current" type="password" autocomplete="current-password" dir="ltr">
+    <label for="acc-new">كلمة المرور الجديدة (8 أحرف على الأقل)</label><input id="acc-new" type="password" autocomplete="new-password" dir="ltr">
+    <button id="do-pass">تغيير كلمة المرور</button>
   </section>
   <section id="s-audit" hidden>
     <h2>سجل النشاط (آخر 100 حدث)</h2>
