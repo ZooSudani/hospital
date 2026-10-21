@@ -25,7 +25,7 @@ results = []
 def check(name, cond):
     results.append((name, bool(cond))); print(("✔ " if cond else "✘ ") + name)
 
-SECTIONS = {"patients": "#s-patients", "p-form": "#p-form", "appts": "#s-appts", "a-form": "#a-form", "staff": "#s-staff", "audit": "#s-audit", "platform": "#s-platform"}
+SECTIONS = {"patients": "#s-patients", "p-form": "#p-form", "appts": "#s-appts", "a-form": "#a-form", "staff": "#s-staff", "audit": "#s-audit", "platform": "#s-platform", "account": "#s-account"}
 
 def visible(page):
     return {k for k, sel in SECTIONS.items() if page.is_visible(sel)}
@@ -60,21 +60,34 @@ with sync_playwright() as p:
 
     # مدير المنصة: المستشفيات فقط
     login(page, "platform", "root@x.com", "Zebra-5521-kx")
-    check("مدير المنصة يرى المستشفيات فقط", visible(page) == {"platform"})
+    check("مدير المنصة يرى المستشفيات فقط", visible(page) == {"platform", "account"})
     body = page.inner_text("body")
     check("مدير المنصة لا يرى كلمة مرضى أو مواعيد", "المرضى" not in body and "المواعيد" not in body)
+    page.locator("#tenants", has_text="admin@alafia.com").wait_for()
+    check("مدير المنصة يرى بريد مدير المستشفى وأزرار الإدارة", page.locator("#tenants button").count() == 2)
     page.screenshot(path="/tmp/ui-platform.png", full_page=True)
+    page.once("dialog", lambda d: d.accept("Platform-reset-pass-9"))
+    page.click("#tenants button[data-act=pass]")
+    page.locator("#msg", has_text="admin@alafia.com").wait_for()
+    check("إعادة تعيين كلمة مرور المدير من لوحة المنصة", "تم تعيين" in page.inner_text("#msg"))
+    page.once("dialog", lambda d: d.accept())
+    page.click("#tenants button[data-act=toggle]")
+    page.locator("#tenants", has_text="موقوف").wait_for()
+    check("إيقاف المستشفى من لوحة المنصة", "موقوف" in page.inner_text("#tenants"))
+    page.click("#tenants button[data-act=toggle]")
+    page.locator("#tenants", has_text="فعّال").wait_for()
+    check("إعادة تفعيل المستشفى", "فعّال" in page.inner_text("#tenants"))
 
     # مدير المستشفى: كل أقسام مستشفاه
-    page.click("#logout"); login(page, "alafia", "admin@alafia.com", "hospital123")
-    check("المدير يرى المرضى والنموذج والمواعيد والحجز والموظفين والسجل", visible(page) == {"patients", "p-form", "appts", "a-form", "staff", "audit"})
+    page.click("#logout"); login(page, "alafia", "admin@alafia.com", "Platform-reset-pass-9")
+    check("المدير يرى المرضى والنموذج والمواعيد والحجز والموظفين والسجل", visible(page) == {"patients", "p-form", "appts", "a-form", "staff", "audit", "account"})
     page.locator("#audit", has_text="دخول").wait_for()
     check("سجل النشاط يعرض أحداثًا بأسماء عربية", "دخول" in page.inner_text("#audit"))
     page.screenshot(path="/tmp/ui-admin.png", full_page=True)
 
     # الاستقبال: بلا موظفين
     page.click("#logout"); login(page, "alafia", "rec@alafia.com", "recept1234")
-    check("الاستقبال: مرضى ونموذج ومواعيد وحجز بلا موظفين", visible(page) == {"patients", "p-form", "appts", "a-form"})
+    check("الاستقبال: مرضى ونموذج ومواعيد وحجز بلا موظفين", visible(page) == {"patients", "p-form", "appts", "a-form", "account"})
     page.wait_for_selector("#a-patient option:nth-child(2)", state="attached")
     page.select_option("#a-doctor", doc_id); page.select_option("#a-time", "10:00"); page.fill("#a-reason", "كشف")
     page.click("#do-appt"); page.locator("#appts", has_text="10:00").wait_for()
@@ -85,7 +98,7 @@ with sync_playwright() as p:
 
     # الطبيب: قوائم قراءة فقط، ومواعيده هو
     page.click("#logout"); login(page, "alafia", "doc@alafia.com", "doctor1234")
-    check("الطبيب: قائمة المرضى والمواعيد فقط", visible(page) == {"patients", "appts"})
+    check("الطبيب: قائمة المرضى والمواعيد فقط", visible(page) == {"patients", "appts", "account"})
     check("الطبيب: لا نموذج تسجيل مريض ولا حجز ولا موظفين", not any(page.is_visible(SECTIONS[k]) for k in ["p-form", "a-form", "staff"]))
     check("الطبيب: لا زر إلغاء", page.locator("#appts button[data-st=cancelled]").count() == 0)
     check("الطبيب: رأس الجدول المريض فقط", page.inner_text("#appts-th").strip() == "المريض")
@@ -95,10 +108,15 @@ with sync_playwright() as p:
 
     # المحاسب: قائمة المرضى فقط
     page.click("#logout"); login(page, "alafia", "acc@alafia.com", "account1234")
-    check("المحاسب: قائمة المرضى فقط", visible(page) == {"patients"})
+    check("المحاسب: قائمة المرضى فقط", visible(page) == {"patients", "account"})
     body = page.inner_text("body")
     check("المحاسب: لا يرى كلمات الحجز أو الموظفين", all(w not in body for w in ["حجز موعد", "إضافة موظف", "تسجيل مريض"]))
     page.screenshot(path="/tmp/ui-accountant.png", full_page=True)
+    page.fill("#acc-current", "account1234"); page.fill("#acc-new", "Account-new-9915"); page.click("#do-pass")
+    page.locator("#msg", has_text="تم تغيير كلمة المرور").wait_for()
+    check("المحاسب غيّر كلمة مروره وبقي داخل الجلسة", page.is_visible("#s-patients") and page.input_value("#acc-new") == "")
+    page.click("#logout"); login(page, "alafia", "acc@alafia.com", "Account-new-9915")
+    check("الدخول بكلمة المرور الجديدة", page.is_visible("#s-patients"))
 
     # خروج: لا بقايا بيانات على الشاشة
     page.click("#logout")
@@ -108,4 +126,5 @@ with sync_playwright() as p:
     b.close()
 
 failed = [n for n, ok in results if not ok]
-print("\nالنتيجة:", "نجحت كل الفحوص" if not 
+print("\nالنتيجة:", "نجحت كل الفحوص" if not failed else f"فشل: {failed}")
+sys.exit(1 if failed else 0)
