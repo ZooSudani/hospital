@@ -47,6 +47,7 @@ function render() {
   $('a-list-title').classList.toggle('mt', !$('a-form').hidden);
   $('s-staff').hidden = !(tenant && can('manageStaff'));
   $('s-audit').hidden = !(tenant && can('viewAudit'));
+  $('s-account').hidden = !on;
   $('appts-th').textContent = on && session.user.role === 'doctor' ? 'المريض' : 'المريض والطبيب';
   $('who').textContent = on ? `${session.user.name} · ${roleNames[session.user.role]}${session.tenant ? ' · ' + session.tenant.name : ''}` : 'لم تسجل الدخول';
   if (!$('s-platform').hidden) loadTenants();
@@ -80,9 +81,39 @@ $('do-setup').onclick = async () => {
 async function loadTenants() {
   try {
     const { tenants } = await api('/api/platform/tenants');
-    $('tenants').innerHTML = tenants.map((t) => `<tr><td>${esc(t.name)}</td><td dir="ltr">${esc(t.slug)}</td><td>${t.status === 'active' ? 'فعّال' : 'موقوف'}</td></tr>`).join('') || '<tr><td colspan="3">لا توجد مستشفيات بعد. أضف أول مستشفى من النموذج أعلاه</td></tr>';
+    $('tenants').innerHTML = tenants.map((t) => {
+      const on = t.status === 'active';
+      return `<tr class="${on ? '' : 'off'}"><td>${esc(t.name)}<br><small dir="ltr">${esc(t.slug)}</small><br><small dir="ltr">${esc(t.admin_email || '')}</small></td><td>${on ? 'فعّال' : 'موقوف'}</td><td><button class="mini" data-act="toggle" data-id="${esc(t.id)}" data-status="${esc(t.status)}">${on ? 'إيقاف' : 'تفعيل'}</button><button class="mini" data-act="pass" data-id="${esc(t.id)}">كلمة مرور المدير</button></td></tr>`;
+    }).join('') || '<tr><td colspan="3">لا توجد مستشفيات بعد. أضف أول مستشفى من النموذج أعلاه</td></tr>';
   } catch (e) { say(e.message, 'err'); }
 }
+
+$('tenants').onclick = async (ev) => {
+  const b = ev.target.closest('button'); if (!b) return;
+  try {
+    if (b.dataset.act === 'toggle') {
+      const next = b.dataset.status === 'active' ? 'suspended' : 'active';
+      if (next === 'suspended' && !confirm('سيُمنع كل موظفي هذا المستشفى من الدخول فورًا. متابعة؟')) return;
+      await api('/api/platform/tenants/' + b.dataset.id, { method: 'PATCH', body: { status: next } });
+      say(next === 'active' ? 'تم تفعيل المستشفى' : 'تم إيقاف المستشفى', 'ok');
+    } else if (b.dataset.act === 'pass') {
+      const pw = prompt('كلمة المرور الجديدة لمدير المستشفى (8 أحرف على الأقل)');
+      if (!pw) return;
+      const r = await api('/api/platform/tenants/' + b.dataset.id, { method: 'PATCH', body: { admin_password: pw } });
+      say('تم تعيين كلمة مرور جديدة للمدير: ' + r.admin_email, 'ok');
+    }
+    loadTenants();
+  } catch (e) { say(e.message, 'err'); }
+};
+
+$('do-pass').onclick = async () => {
+  try {
+    const r = await api('/api/account/password', { method: 'POST', body: { current: $('acc-current').value, next: $('acc-new').value } });
+    session.token = r.token; sessionStorage.setItem('session', JSON.stringify(session)); // الجلسة القديمة سقطت، فنستبدلها بالجديدة
+    ['acc-current', 'acc-new'].forEach((i) => ($(i).value = ''));
+    say('تم تغيير كلمة المرور', 'ok');
+  } catch (e) { say(e.message, 'err'); }
+};
 
 $('do-tenant').onclick = async () => {
   try {
