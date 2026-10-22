@@ -44,7 +44,12 @@
     <label for="t-apass">كلمة مروره (8 أحرف على الأقل)</label><input id="t-apass" type="password" autocomplete="new-password" dir="ltr">
     <button id="do-tenant">إضافة المستشفى</button>
     <h2 class="mt">المستشفيات</h2>
-    <table><thead><tr><th>المستشفى</th><th>الحالة</th><th></th></tr></thead><tbody id="tenants"></tbody></table>
+    <div id="tenants"></div>
+  </section>
+
+  <section id="s-paudit" hidden>
+    <h2>نشاط المنصة (آخر 100 حدث)</h2>
+    <table><thead><tr><th>الوقت</th><th>من وماذا</th></tr></thead><tbody id="paudit"></tbody></table>
   </section>
 
   <section id="s-patients" hidden>
