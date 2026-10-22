@@ -25,7 +25,7 @@ results = []
 def check(name, cond):
     results.append((name, bool(cond))); print(("✔ " if cond else "✘ ") + name)
 
-SECTIONS = {"patients": "#s-patients", "p-form": "#p-form", "appts": "#s-appts", "a-form": "#a-form", "staff": "#s-staff", "audit": "#s-audit", "platform": "#s-platform", "account": "#s-account"}
+SECTIONS = {"patients": "#s-patients", "p-form": "#p-form", "appts": "#s-appts", "a-form": "#a-form", "staff": "#s-staff", "audit": "#s-audit", "platform": "#s-platform", "paudit": "#s-paudit", "account": "#s-account"}
 
 def visible(page):
     return {k for k, sel in SECTIONS.items() if page.is_visible(sel)}
@@ -60,11 +60,14 @@ with sync_playwright() as p:
 
     # مدير المنصة: المستشفيات فقط
     login(page, "platform", "root@x.com", "Zebra-5521-kx")
-    check("مدير المنصة يرى المستشفيات فقط", visible(page) == {"platform", "account"})
+    check("مدير المنصة يرى المستشفيات فقط", visible(page) == {"platform", "paudit", "account"})
     body = page.inner_text("body")
     check("مدير المنصة لا يرى كلمة مرضى أو مواعيد", "المرضى" not in body and "المواعيد" not in body)
     page.locator("#tenants", has_text="admin@alafia.com").wait_for()
-    check("مدير المنصة يرى بريد مدير المستشفى وأزرار الإدارة", page.locator("#tenants button").count() == 2)
+    txt = page.inner_text("#tenants")
+    check("لوحة المنصة: بطاقة المستشفى بإحصاءاتها وبريد المدير", page.locator("#tenants .card").count() == 1 and "موظفون" in txt and "مرضى" in txt and "مواعيد" in txt)
+    check("لوحة المنصة: أزرار الإدارة الخمسة", all(page.locator(f"#tenants button[data-act={a}]").count() == 1 for a in ["manage", "toggle", "rename", "unlock", "pass"]))
+    check("لوحة المنصة: لا أسماء مرضى (تجميع فقط)", "محمد" not in txt and "سارة" not in txt)
     page.screenshot(path="/tmp/ui-platform.png", full_page=True)
     page.once("dialog", lambda d: d.accept("Platform-reset-pass-9"))
     page.click("#tenants button[data-act=pass]")
@@ -77,6 +80,26 @@ with sync_playwright() as p:
     page.click("#tenants button[data-act=toggle]")
     page.locator("#tenants", has_text="فعّال").wait_for()
     check("إعادة تفعيل المستشفى", "فعّال" in page.inner_text("#tenants"))
+    # إدارة موظفي مستشفى من لوحة المنصة
+    page.click("#tenants button[data-act=manage]")
+    page.locator("#tenants .detail", has_text="admin@alafia.com").wait_for()
+    check("إدارة الموظفين: تظهر قائمة موظفي المستشفى بآخر دخول", "آخر دخول" in page.inner_text("#tenants .detail") and "د. منتصر" in page.inner_text("#tenants .detail"))
+    page.fill("#tenants .s-name", "لينا"); page.fill("#tenants .s-email", "lina@alafia.com"); page.fill("#tenants .s-pass", "Zebra-pass-5532")
+    page.select_option("#tenants .s-role", "reception"); page.click("#tenants button[data-act=s-add]")
+    page.locator("#tenants .detail", has_text="lina@alafia.com").wait_for()
+    check("إضافة موظف من لوحة المنصة", "لينا" in page.inner_text("#tenants .detail"))
+    page.screenshot(path="/tmp/ui-platform-manage.png", full_page=True)
+    page.once("dialog", lambda d: d.accept("Violet-new-7788"))
+    page.locator("#tenants .detail tr", has_text="lina@alafia.com").locator("button[data-act=s-pass]").click()
+    page.locator("#msg", has_text="تم تغيير كلمة مرور الموظف").wait_for()
+    page.locator("#tenants .detail tr", has_text="lina@alafia.com").locator("button[data-act=s-toggle]").click()
+    page.locator("#tenants .detail tr.off", has_text="lina@alafia.com").wait_for()
+    check("إيقاف موظف من لوحة المنصة", "موقوف" in page.inner_text("#tenants .detail"))
+    page.click("#tenants button[data-act=unlock]")
+    page.locator("#msg", has_text="فك قفل الدخول").wait_for()
+    check("فك قفل المستشفى", True)
+    page.locator("#paudit", has_text="إنشاء مستشفى").wait_for()
+    check("نشاط المنصة يعرض الأحداث باسم المستشفى", "مستشفى العافية" in page.inner_text("#paudit"))
 
     # مدير المستشفى: كل أقسام مستشفاه
     page.click("#logout"); login(page, "alafia", "admin@alafia.com", "Platform-reset-pass-9")
