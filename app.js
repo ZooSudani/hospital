@@ -48,12 +48,14 @@ function render() {
   $('s-staff').hidden = !(tenant && can('manageStaff'));
   $('s-audit').hidden = !(tenant && can('viewAudit'));
   $('s-account').hidden = !on;
+  $('s-paudit').hidden = !(on && session.user.role === 'platform_admin');
   $('appts-th').textContent = on && session.user.role === 'doctor' ? 'المريض' : 'المريض والطبيب';
   $('who').textContent = on ? `${session.user.name} · ${roleNames[session.user.role]}${session.tenant ? ' · ' + session.tenant.name : ''}` : 'لم تسجل الدخول';
   if (!$('s-platform').hidden) loadTenants();
   if (!$('s-patients').hidden) loadPatients();
   if (!$('s-staff').hidden) loadStaff();
   if (!$('s-audit').hidden) loadAudit();
+  if (!$('s-paudit').hidden) loadPlatformAudit();
   if (!$('s-appts').hidden) { initApptDates(); loadAppts(); }
   if (!$('a-form').hidden) loadApptForm();
 }
@@ -78,33 +80,108 @@ $('do-setup').onclick = async () => {
   } catch (e) { say(e.message, 'err'); }
 };
 
+// ===== لوحة مدير المنصة =====
+let openTenant = null; // المستشفى المفتوح لإدارة موظفيه
+
 async function loadTenants() {
   try {
     const { tenants } = await api('/api/platform/tenants');
     $('tenants').innerHTML = tenants.map((t) => {
       const on = t.status === 'active';
-      return `<tr class="${on ? '' : 'off'}"><td>${esc(t.name)}<br><small dir="ltr">${esc(t.slug)}</small><br><small dir="ltr">${esc(t.admin_email || '')}</small></td><td>${on ? 'فعّال' : 'موقوف'}</td><td><button class="mini" data-act="toggle" data-id="${esc(t.id)}" data-status="${esc(t.status)}">${on ? 'إيقاف' : 'تفعيل'}</button><button class="mini" data-act="pass" data-id="${esc(t.id)}">كلمة مرور المدير</button></td></tr>`;
-    }).join('') || '<tr><td colspan="3">لا توجد مستشفيات بعد. أضف أول مستشفى من النموذج أعلاه</td></tr>';
+      const id = esc(t.id);
+      return `<div class="card${on ? '' : ' off'}">
+        <div class="card-head"><b>${esc(t.name)}</b><span class="badge ${on ? 'ok' : 'bad'}">${on ? 'فعّال' : 'موقوف'}</span></div>
+        <small dir="ltr">${esc(t.slug)} · ${esc(t.admin_email || 'بلا مدير')}</small>
+        <div class="stats"><span>موظفون ${t.staff_count}</span><span>مرضى ${t.patients_count}</span><span>مواعيد ${t.appointments_count}</span></div>
+        <small>آخر نشاط: <span dir="ltr">${esc(t.last_activity ? khartoumTime(t.last_activity) : 'لا يوجد')}</span></small>
+        <div class="actions">
+          <button class="mini" data-act="manage" data-id="${id}">إدارة الموظفين</button>
+          <button class="mini" data-act="toggle" data-id="${id}" data-status="${esc(t.status)}">${on ? 'إيقاف' : 'تفعيل'}</button>
+          <button class="mini" data-act="rename" data-id="${id}" data-name="${esc(t.name)}">تسمية</button>
+          <button class="mini" data-act="unlock" data-id="${id}">فك القفل</button>
+          <button class="mini" data-act="pass" data-id="${id}">كلمة مرور المدير</button>
+        </div>
+        <div class="detail" id="d-${id}" hidden></div>
+      </div>`;
+    }).join('') || '<p>لا توجد مستشفيات بعد. أضف أول مستشفى من النموذج أعلاه</p>';
+    if (openTenant) { if ($('d-' + openTenant)) await manageTenant(openTenant); else openTenant = null; }
   } catch (e) { say(e.message, 'err'); }
+}
+
+async function manageTenant(id) {
+  const box = $('d-' + id); if (!box) return;
+  const { staff } = await api(`/api/platform/tenants/${id}/staff`);
+  openTenant = id;
+  const rows = staff.map((u) => `<tr class="${u.active ? '' : 'off'}"><td>${esc(u.name)}<br><small dir="ltr">${esc(u.email)}</small><br><small>آخر دخول: <span dir="ltr">${esc(u.last_login ? khartoumTime(u.last_login) : 'لم يدخل')}</span></small></td><td>${roleNames[u.role] || esc(u.role)}${u.active ? '' : ' (موقوف)'}</td><td><button class="mini" data-act="s-toggle" data-id="${esc(id)}" data-uid="${esc(u.id)}" data-active="${u.active}">${u.active ? 'إيقاف' : 'تفعيل'}</button><button class="mini" data-act="s-pass" data-id="${esc(id)}" data-uid="${esc(u.id)}">كلمة مرور</button><button class="mini" data-act="s-unlock" data-id="${esc(id)}" data-uid="${esc(u.id)}">فك القفل</button></td></tr>`).join('');
+  box.hidden = false;
+  box.innerHTML = `<h3>الموظفون</h3><table><thead><tr><th>الموظف</th><th>الدور</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+    <h3>إضافة موظف</h3>
+    <input class="s-name" aria-label="الاسم" placeholder="الاسم">
+    <input class="s-email" type="email" dir="ltr" aria-label="البريد الإلكتروني" placeholder="البريد الإلكتروني">
+    <input class="s-pass" type="password" autocomplete="new-password" dir="ltr" aria-label="كلمة المرور" placeholder="كلمة المرور">
+    <select class="s-role" aria-label="الدور"><option value="admin">مدير مستشفى</option><option value="doctor">طبيب</option><option value="reception">استقبال</option><option value="accountant">محاسب</option></select>
+    <div class="actions"><button class="mini" data-act="s-add" data-id="${esc(id)}">إضافة</button><button class="mini" data-act="close" data-id="${esc(id)}">إغلاق</button></div>`;
 }
 
 $('tenants').onclick = async (ev) => {
   const b = ev.target.closest('button'); if (!b) return;
+  const { act, id, uid } = b.dataset;
+  const patch = (path, body) => api(path, { method: 'PATCH', body });
   try {
-    if (b.dataset.act === 'toggle') {
+    if (act === 'manage') { await manageTenant(id); return; }
+    if (act === 'close') { openTenant = null; $('d-' + id).hidden = true; return; }
+    if (act === 'toggle') {
       const next = b.dataset.status === 'active' ? 'suspended' : 'active';
       if (next === 'suspended' && !confirm('سيُمنع كل موظفي هذا المستشفى من الدخول فورًا. متابعة؟')) return;
-      await api('/api/platform/tenants/' + b.dataset.id, { method: 'PATCH', body: { status: next } });
+      await patch('/api/platform/tenants/' + id, { status: next });
       say(next === 'active' ? 'تم تفعيل المستشفى' : 'تم إيقاف المستشفى', 'ok');
-    } else if (b.dataset.act === 'pass') {
+    } else if (act === 'rename') {
+      const name = prompt('الاسم الجديد للمستشفى', b.dataset.name);
+      if (!name) return;
+      await patch('/api/platform/tenants/' + id, { name });
+      say('تمت التسمية', 'ok');
+    } else if (act === 'unlock') {
+      await patch('/api/platform/tenants/' + id, { unlock: true });
+      say('تم فك قفل الدخول عن كل موظفي المستشفى', 'ok');
+      return;
+    } else if (act === 'pass') {
       const pw = prompt('كلمة المرور الجديدة لمدير المستشفى (8 أحرف على الأقل)');
       if (!pw) return;
-      const r = await api('/api/platform/tenants/' + b.dataset.id, { method: 'PATCH', body: { admin_password: pw } });
+      const r = await patch('/api/platform/tenants/' + id, { admin_password: pw });
       say('تم تعيين كلمة مرور جديدة للمدير: ' + r.admin_email, 'ok');
+    } else if (act === 's-toggle') {
+      await patch(`/api/platform/tenants/${id}/staff/${uid}`, { active: b.dataset.active !== '1' });
+      say('تم تحديث حالة الموظف', 'ok');
+    } else if (act === 's-pass') {
+      const pw = prompt('كلمة المرور الجديدة للموظف (8 أحرف على الأقل)');
+      if (!pw) return;
+      await patch(`/api/platform/tenants/${id}/staff/${uid}`, { password: pw });
+      say('تم تغيير كلمة مرور الموظف', 'ok');
+      return;
+    } else if (act === 's-unlock') {
+      await patch(`/api/platform/tenants/${id}/staff/${uid}`, { unlock: true });
+      say('تم فك قفل الموظف', 'ok');
+      return;
+    } else if (act === 's-add') {
+      const box = $('d-' + id);
+      await api(`/api/platform/tenants/${id}/staff`, { method: 'POST', body: { name: box.querySelector('.s-name').value, email: box.querySelector('.s-email').value, password: box.querySelector('.s-pass').value, role: box.querySelector('.s-role').value } });
+      say('تمت إضافة الموظف', 'ok');
     }
     loadTenants();
   } catch (e) { say(e.message, 'err'); }
 };
+
+async function loadPlatformAudit() {
+  try {
+    const { events } = await api('/api/platform/audit');
+    $('paudit').innerHTML = events.map((e) => {
+      const who = e.user_name ? esc(e.user_name) : (e.action === 'login.fail' && e.detail ? esc(e.detail) : 'غير معروف');
+      const where = e.tenant_name ? esc(e.tenant_name) : 'المنصة';
+      const extra = e.action === 'login.fail' ? (e.ip ? ' · ' + esc(e.ip) : '') : '';
+      return `<tr><td dir="ltr">${esc(khartoumTime(e.created_at))}</td><td>${who}<br><small>${esc(actionNames[e.action] || e.action)} · ${where}${extra}</small></td></tr>`;
+    }).join('') || '<tr><td colspan="2">لا توجد أحداث بعد</td></tr>';
+  } catch (e) { say(e.message, 'err'); }
+}
 
 $('do-pass').onclick = async () => {
   try {
@@ -236,7 +313,7 @@ $('appts').onclick = async (ev) => {
 // ===== سجل النشاط (للمدير) =====
 const actionNames = {
   'login.ok': 'دخول', 'login.fail': 'محاولة دخول فاشلة', 'patient.create': 'تسجيل مريض', 'patient.view': 'فتح ملف مريض',
-  'tenant.create': 'إنشاء مستشفى', 'platform.setup': 'إعداد المنصة', 'staff.create': 'إضافة موظف', 'staff.update': 'تعديل موظف', 'appointment.create': 'حجز موعد', 'appointment.status': 'تغيير حالة موعد',
+  'tenant.create': 'إنشاء مستشفى', 'tenant.update': 'تعديل مستشفى', 'account.password': 'تغيير كلمة مرور', 'platform.setup': 'إعداد المنصة', 'staff.create': 'إضافة موظف', 'staff.update': 'تعديل موظف', 'appointment.create': 'حجز موعد', 'appointment.status': 'تغيير حالة موعد',
 };
 const khartoumTime = (utc) => new Date(new Date(utc.replace(' ', 'T') + 'Z').getTime() + 2 * 3600 * 1000).toISOString().slice(0, 16).replace('T', ' ');
 
