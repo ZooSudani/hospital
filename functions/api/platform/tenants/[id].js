@@ -2,7 +2,7 @@ import { passwordProblem, hashPassword } from '../../../../lib/auth.js';
 import { auditRaw } from '../../../../lib/audit.js';
 import { can, fail, json, readJson } from '../../../../lib/http.js';
 
-// إيقاف المستشفى أو تفعيله، وإعادة تعيين كلمة مرور مديره. لمدير المنصة فقط.
+// إيقاف المستشفى أو تفعيله، وتسميته، وفك قفل الدخول، وإعادة تعيين كلمة مرور مديره. لمدير المنصة فقط.
 export async function onRequestPatch({ request, params, env, data }) {
   if (!can(data.auth, 'platform_admin')) return fail(403, 'للمدير العام للمنصة فقط');
   const b = await readJson(request);
@@ -36,6 +36,19 @@ export async function onRequestPatch({ request, params, env, data }) {
     await env.DB.prepare(`DELETE FROM login_attempts WHERE key = ?`).bind(`u:${tenant.slug}:${admin.email}`).run();
     adminEmail = admin.email;
     changed.push('admin_password');
+  }
+
+  if (b.name !== undefined) {
+    const name = String(b.name).trim();
+    if (name.length < 3 || name.length > 80) return fail(400, 'اسم المستشفى من 3 إلى 80 حرفًا');
+    await env.DB.prepare(`UPDATE tenants SET name = ? WHERE id = ?`).bind(name, tenant.id).run();
+    changed.push('name');
+  }
+
+  if (b.unlock === true) {
+    // يفك قفل الدخول عن كل موظفي المستشفى (مفاتيح القفل تبدأ برمز المستشفى)
+    await env.DB.prepare(`DELETE FROM login_attempts WHERE key LIKE ?`).bind(`u:${tenant.slug}:%`).run();
+    changed.push('unlock');
   }
 
   if (!changed.length) return fail(400, 'لا يوجد ما يُعدَّل');
