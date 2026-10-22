@@ -25,3 +25,15 @@ button.mini { margin:0 0 0 4px; padding:4px 10px; font-size:13px; background:#ff
 [hidden] { display:none !important; }
 .mt { margin-top:18px; }
 .center { text-align:center; }
+.card { border:1px solid var(--line); border-radius:10px; padding:12px; margin-top:10px; background:#fff; }
+.card.off { background:#f3f4f6; }
+.card-head { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+.badge { font-size:12px; padding:2px 10px; border-radius:20px; }
+.badge.ok { background:#dcfce7; color:#067647; }
+.badge.bad { background:#fee4e2; color:#b42318; }
+.stats { display:flex; gap:12px; flex-wrap:wrap; margin:6px 0; font-size:14px; }
+.actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+.actions .mini { margin:0; }
+.detail { margin-top:12px; padding-top:10px; border-top:1px dashed var(--line); }
+.detail h3 { font-size:14px; margin:8px 0 4px; color:var(--navy); }
+.detail input, .detail select { margin-top:6px; }
