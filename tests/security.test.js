@@ -14,6 +14,9 @@ import { onRequestGet as listAudit } from '../functions/api/audit.js';
 import { onRequestGet as listTenants } from '../functions/api/platform/tenants.js';
 import { onRequestPatch as patchTenant } from '../functions/api/platform/tenants/[id].js';
 import { onRequestPost as changePassword } from '../functions/api/account/password.js';
+import { onRequestGet as pStaffList, onRequestPost as pStaffAdd } from '../functions/api/platform/tenants/[id]/staff.js';
+import { onRequestPatch as pStaffPatch } from '../functions/api/platform/tenants/[id]/staff/[uid].js';
+import { onRequestGet as platformAudit } from '../functions/api/platform/audit.js';
 
 const SECRET = 'security-test-secret-'.padEnd(48, 'x');
 const env = { DB: makeDb(), JWT_SECRET: SECRET, SETUP_KEY: 'setup-key-1' };
@@ -216,4 +219,82 @@ assert.equal(p2.status, 200);
 assert.equal((await call(listTenants, { token: p2.body.token })).status, 200);
 assert.equal((await loginReq('platform', 'root@x.com', 'Platform-new-pass-77', '12.0.0.2')).status, 200);
 
-console.log('security (إدارة الحسابات): كل الاختبارات نجحت (2 مجموعتان)');
+// ===== 9) لوحة تحكم مدير المنصة =====
+const P = p2.body.token; // جلسة مدير المنصة الحالية
+const stList = (token, id) => call(pStaffList, { token, params: { id } });
+const stAdd = (token, id, body) => call(pStaffAdd, { method: 'POST', token, params: { id }, body });
+const stPatch = (token, id, uid, body) => call(pStaffPatch, { method: 'PATCH', token, params: { id, uid }, body });
+
+// إحصاءات تجميعية بلا بيانات مرضى
+const t9 = (await call(listTenants, { token: P })).body;
+const noorRow = t9.tenants.find((t) => t.slug === 'alnoor');
+assert.ok(noorRow.staff_count >= 4 && noorRow.patients_count >= 3 && 'appointments_count' in noorRow && noorRow.last_activity, 'أعداد وآخر نشاط');
+assert.ok(!JSON.stringify(t9).includes('ليلى') && !JSON.stringify(t9).includes('0911111111'), 'لا أسماء مرضى ولا هواتفهم في لوحة المنصة');
+
+// غير مدير المنصة لا يصل لأي مسار منصة
+for (const [name, token] of [['مدير مستشفى', adminNoor2.body.token], ['استقبال', reception], ['محاسب', r.body.token]]) {
+  assert.equal((await stList(token, alnoorT.id)).status, 403, name + ': قائمة الموظفين');
+  assert.equal((await stAdd(token, alnoorT.id, { name: 'x', email: 'x@y.com', password: 'Some-pass-4412', role: 'admin' })).status, 403, name + ': إضافة');
+  assert.equal((await stPatch(token, alnoorT.id, recId, { active: false })).status, 403, name + ': تعديل');
+  assert.equal((await call(platformAudit, { token })).status, 403, name + ': نشاط المنصة');
+}
+
+// قائمة موظفي مستشفى
+let list = (await stList(P, alnoorT.id)).body.staff;
+assert.ok(list.length >= 4 && list.every((u) => !('password_hash' in u)), 'بلا تجزئة كلمات المرور');
+assert.ok(list.some((u) => u.email === 'admin@alnoor.com' && u.last_login), 'آخر دخول معروف');
+assert.equal((await stList(P, 'nope')).status, 404);
+
+// إضافة موظف من المنصة
+assert.equal((await stAdd(P, alnoorT.id, { name: 'د. جديد', email: 'newdoc@alnoor.com', password: 'Fresh-pass-6620', role: 'doctor' })).status, 201);
+assert.equal((await stAdd(P, alnoorT.id, { name: 'مكرر', email: 'NEWDOC@alnoor.com', password: 'Fresh-pass-6620', role: 'doctor' })).status, 409);
+assert.equal((await stAdd(P, alnoorT.id, { name: 'ضعيف', email: 'w@alnoor.com', password: '12345678', role: 'doctor' })).status, 400);
+assert.equal((await stAdd(P, alnoorT.id, { name: 'خطر', email: 'pa@alnoor.com', password: 'Fresh-pass-6620', role: 'platform_admin' })).status, 400, 'لا ينشئ مدير منصة عبر هذا المسار');
+assert.equal((await loginReq('alnoor', 'newdoc@alnoor.com', 'Fresh-pass-6620', '13.0.0.1')).status, 200);
+
+// تعديل حساب موظف: إيقاف، تفعيل، كلمة مرور، دور
+const newDocId = (await stList(P, alnoorT.id)).body.staff.find((u) => u.email === 'newdoc@alnoor.com').id;
+const nd = (await loginReq('alnoor', 'newdoc@alnoor.com', 'Fresh-pass-6620', '13.0.0.1')).body.token;
+assert.equal((await call(listPatients, { token: nd })).status, 200);
+assert.equal((await stPatch(P, alnoorT.id, newDocId, { active: false })).status, 200);
+assert.equal((await call(listPatients, { token: nd })).status, 403, 'الإيقاف من المنصة يقطع الموظف فورًا');
+assert.equal((await stPatch(P, alnoorT.id, newDocId, { active: true })).status, 200);
+assert.equal((await stPatch(P, alnoorT.id, newDocId, { password: 'Reset-from-panel-8' })).status, 200);
+assert.equal((await call(listPatients, { token: nd })).status, 401, 'إعادة التعيين تُسقط جلسته');
+assert.equal((await loginReq('alnoor', 'newdoc@alnoor.com', 'Reset-from-panel-8', '13.0.0.1')).status, 200);
+assert.equal((await stPatch(P, alnoorT.id, newDocId, { role: 'reception' })).status, 200);
+assert.equal((await stPatch(P, alnoorT.id, newDocId, { role: 'king' })).status, 400);
+assert.equal((await stPatch(P, alnoorT.id, newDocId, {})).status, 400, 'لا تعديل');
+assert.equal((await stPatch(P, alnoorT.id, 'nope', { active: false })).status, 404);
+assert.equal((await stPatch(P, tenantAmal, newDocId, { active: false })).status, 404, 'موظف مستشفى لا يُعدَّل عبر مسار مستشفى آخر');
+
+// حماية آخر مدير فعّال
+const amalAdminId = (await stList(P, tenantAmal)).body.staff.find((u) => u.role === 'admin').id;
+assert.equal((await stPatch(P, tenantAmal, amalAdminId, { active: false })).status, 400, 'لا يوقف آخر مدير');
+assert.equal((await stPatch(P, tenantAmal, amalAdminId, { role: 'doctor' })).status, 400, 'لا يخفّض آخر مدير');
+assert.equal((await stAdd(P, tenantAmal, { name: 'مدير ثانٍ', email: 'admin2@alamal.com', password: 'Second-admin-77', role: 'admin' })).status, 201);
+assert.equal((await stPatch(P, tenantAmal, amalAdminId, { active: false })).status, 200, 'بوجود مدير آخر يُسمح');
+
+// فك القفل: لموظف بعينه ولكل المستشفى
+for (let i = 0; i < 5; i++) await loginReq('alnoor', 'newdoc@alnoor.com', 'bad-' + i, '13.0.0.9');
+assert.equal((await loginReq('alnoor', 'newdoc@alnoor.com', 'Reset-from-panel-8', '13.0.0.8')).status, 429);
+assert.equal((await stPatch(P, alnoorT.id, newDocId, { unlock: true })).status, 200);
+assert.equal((await loginReq('alnoor', 'newdoc@alnoor.com', 'Reset-from-panel-8', '13.0.0.8')).status, 200);
+for (let i = 0; i < 5; i++) await loginReq('alnoor', 'reem@alnoor.com', 'bad-' + i, '13.0.0.7');
+assert.equal((await loginReq('alnoor', 'reem@alnoor.com', 'Staff-pass-7731', '13.0.0.6')).status, 429);
+assert.equal((await patchT(P, alnoorT.id, { unlock: true })).status, 200, 'فك قفل كل المستشفى');
+assert.equal((await loginReq('alnoor', 'reem@alnoor.com', 'Staff-pass-7731', '13.0.0.6')).status, 200);
+
+// تسمية المستشفى
+assert.equal((await patchT(P, alnoorT.id, { name: 'ن' })).status, 400);
+assert.equal((await patchT(P, alnoorT.id, { name: 'مستشفى النور التخصصي' })).status, 200);
+assert.equal((await call(listTenants, { token: P })).body.tenants.find((t) => t.slug === 'alnoor').name, 'مستشفى النور التخصصي');
+
+// نشاط المنصة: بلا معرّفات ولا تفاصيل مرضى، وفيه عنوان المحاولات الفاشلة
+const ev = (await call(platformAudit, { token: P })).body.events;
+assert.ok(ev.length > 10 && ev.every((e) => !('target' in e) && !('tenant_id' in e)), 'بلا target ولا tenant_id');
+assert.ok(ev.some((e) => e.tenant_name === 'مستشفى النور التخصصي' && e.action === 'staff.update'), 'يربط الحدث باسم المستشفى');
+assert.ok(ev.filter((e) => /^(patient|appointment)\./.test(e.action)).every((e) => e.detail === null), 'أحداث المرضى والمواعيد بلا تفاصيل');
+assert.ok(ev.some((e) => e.action === 'login.fail' && e.ip), 'عنوان المحاولات الفاشلة ظاهر لمدير المنصة');
+
+console.log('security (إدارة الحسابات + لوحة المنصة): كل الاختبارات نجحت');
