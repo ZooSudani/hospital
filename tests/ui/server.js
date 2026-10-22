@@ -14,6 +14,9 @@ import * as appts from '../../functions/api/appointments/index.js';
 import * as apptOne from '../../functions/api/appointments/[id].js';
 import * as audit from '../../functions/api/audit.js';
 import * as tenantOne from '../../functions/api/platform/tenants/[id].js';
+import * as tenantStaff from '../../functions/api/platform/tenants/[id]/staff.js';
+import * as tenantStaffOne from '../../functions/api/platform/tenants/[id]/staff/[uid].js';
+import * as platformAudit from '../../functions/api/platform/audit.js';
 import * as accountPw from '../../functions/api/account/password.js';
 
 const env = { DB: makeDb(), JWT_SECRET: 'ui-test-secret-'.padEnd(48, 'x'), SETUP_KEY: 'ui-key' };
@@ -21,7 +24,7 @@ const routes = [
   [/^\/api\/setup$/, setup], [/^\/api\/auth\/login$/, login], [/^\/api\/platform\/tenants$/, tenants],
   [/^\/api\/patients$/, patients], [/^\/api\/patients\/([^/]+)$/, patient],
   [/^\/api\/staff$/, staff], [/^\/api\/staff\/([^/]+)$/, staffOne],
-  [/^\/api\/appointments$/, appts], [/^\/api\/appointments\/([^/]+)$/, apptOne], [/^\/api\/audit$/, audit], [/^\/api\/platform\/tenants\/([^/]+)$/, tenantOne], [/^\/api\/account\/password$/, accountPw],
+  [/^\/api\/appointments$/, appts], [/^\/api\/appointments\/([^/]+)$/, apptOne], [/^\/api\/audit$/, audit], [/^\/api\/platform\/tenants\/([^/]+)$/, tenantOne], [/^\/api\/platform\/tenants\/([^/]+)\/staff$/, tenantStaff], [/^\/api\/platform\/tenants\/([^/]+)\/staff\/([^/]+)$/, tenantStaffOne], [/^\/api\/platform\/audit$/, platformAudit], [/^\/api\/account\/password$/, accountPw],
 ];
 
 http.createServer(async (req, res) => {
@@ -42,7 +45,7 @@ http.createServer(async (req, res) => {
   const body = chunks.length ? Buffer.concat(chunks) : undefined;
   const request = new Request(url, { method: req.method, headers: req.headers, body: ['GET', 'HEAD'].includes(req.method) ? undefined : body });
   let handler, params = {};
-  for (const [re, mod] of routes) { const m = url.pathname.match(re); if (m) { handler = mod['onRequest' + req.method[0] + req.method.slice(1).toLowerCase()]; params = { id: m[1] }; break; } }
+  for (const [re, mod] of routes) { const m = url.pathname.match(re); if (m) { handler = mod['onRequest' + req.method[0] + req.method.slice(1).toLowerCase()]; params = { id: m[1], uid: m[2] }; break; } }
   const data = {};
   const out = handler
     ? await middleware({ request, env, data, next: async () => handler({ request, env, data, params }) })
