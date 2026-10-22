@@ -4,9 +4,14 @@ import { can, fail, json, readJson } from '../../../lib/http.js';
 
 export async function onRequestGet({ env, data }) {
   if (!can(data.auth, 'platform_admin')) return fail(403, 'للمدير العام للمنصة فقط');
+  // أعداد تجميعية فقط: لا أسماء مرضى ولا أي محتوى طبي
   const { results } = await env.DB.prepare(
     `SELECT t.id, t.name, t.slug, t.status, t.created_at,
-            (SELECT u.email FROM users u WHERE u.tenant_id = t.id AND u.role = 'admin' ORDER BY u.created_at LIMIT 1) AS admin_email
+            (SELECT u.email FROM users u WHERE u.tenant_id = t.id AND u.role = 'admin' ORDER BY u.created_at LIMIT 1) AS admin_email,
+            (SELECT COUNT(*) FROM users u WHERE u.tenant_id = t.id AND u.active = 1) AS staff_count,
+            (SELECT COUNT(*) FROM patients p WHERE p.tenant_id = t.id) AS patients_count,
+            (SELECT COUNT(*) FROM appointments a WHERE a.tenant_id = t.id) AS appointments_count,
+            (SELECT MAX(l.created_at) FROM audit_log l WHERE l.tenant_id = t.id) AS last_activity
      FROM tenants t ORDER BY t.created_at DESC`
   ).all();
   return json({ tenants: results });
