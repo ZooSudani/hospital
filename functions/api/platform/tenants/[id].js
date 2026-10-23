@@ -2,7 +2,7 @@ import { passwordProblem, hashPassword } from '../../../../lib/auth.js';
 import { auditRaw } from '../../../../lib/audit.js';
 import { can, fail, json, readJson } from '../../../../lib/http.js';
 
-// إيقاف المستشفى أو تفعيله، وتسميته، وفك قفل الدخول، وإعادة تعيين كلمة مرور مديره. لمدير المنصة فقط.
+// إيقاف المستشفى أو تفعيله، وتسميته، وفك قفل الدخول، وإعادة تعيين كلمة مرور  مديره. لمدير المنصة فقط.
 export async function onRequestPatch({ request, params, env, data }) {
   if (!can(data.auth, 'platform_admin')) return fail(403, 'للمدير العام للمنصة فقط');
   const b = await readJson(request);
