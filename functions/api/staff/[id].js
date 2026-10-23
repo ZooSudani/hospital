@@ -1,11 +1,12 @@
-import { hashPassword } from '../../../lib/auth.js';
-import { can, fail, json, readJson } from '../../../lib/http.js';
+import { hashPassword, passwordProblem } from '../../../lib/auth.js';
+import { has } from '../../../lib/permissions.js';
+import { fail, json, readJson } from '../../../lib/http.js';
 import { repoFor } from '../../../lib/repo.js';
 
 const ROLES = ['admin', 'doctor', 'reception', 'accountant'];
 
 export async function onRequestPatch({ request, params, env, data }) {
-  if (!can(data.auth, 'admin')) return fail(403, 'لمدير المستشفى فقط');
+  if (!has(data.auth, 'staff.manage')) return fail(403, 'غير مسموح');
   const b = await readJson(request);
   if (!b) return fail(400, 'طلب غير صالح');
 
@@ -13,6 +14,8 @@ export async function onRequestPatch({ request, params, env, data }) {
   const target = await repo.staff.get(params.id);
   // نفس الرد سواء لم يوجد الموظف أو كان في مستشفى آخر
   if (!target) return fail(404, 'الموظف غير موجود');
+  // حسابات المديرين لا يعدّلها إلا مدير فعلي
+  if (target.role === 'admin' && data.auth.role !== 'admin') return fail(403, 'حسابات المديرين لمديري المستشفى فقط');
 
   const fields = {};
   if (b.name !== undefined) {
@@ -22,11 +25,15 @@ export async function onRequestPatch({ request, params, env, data }) {
   }
   if (b.role !== undefined) {
     if (!ROLES.includes(b.role)) return fail(400, 'الدور غير صحيح');
+    if (b.role === 'admin' && data.auth.role !== 'admin') return fail(403, 'الترقية إلى مدير لمديري المستشفى فقط');
     fields.role = b.role;
+    // تغيير الدور يصفّر التخصيصات، لأنها كانت مبنية على صلاحيات الدور القديم
+    if (b.role !== target.role) fields.perm_overrides = null;
   }
   if (b.active !== undefined) fields.active = b.active ? 1 : 0;
   if (b.password !== undefined) {
-    if (String(b.password).length < 8) return fail(400, 'كلمة المرور 8 أحرف على الأقل');
+    const problem = passwordProblem(b.password, target.email, target.name);
+    if (problem) return fail(400, problem);
     fields.password_hash = await hashPassword(String(b.password));
   }
 
@@ -36,5 +43,7 @@ export async function onRequestPatch({ request, params, env, data }) {
   }
 
   await repo.staff.update(params.id, fields);
+  // نسجّل أسماء الحقول المعدّلة فقط، وكلمة المرور تُذكر دون قيمتها
+  await repo.audit.log('staff.update', params.id, Object.keys(fields).map((k) => (k === 'password_hash' ? 'password' : k)).join(','));
   return json({ ok: true });
 }
