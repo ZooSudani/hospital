@@ -25,3 +25,4 @@ assert.ok(passwordProblem('aaaaaaaaaa'), 'حرف مكرر');
 assert.ok(passwordProblem('hala-2026-xyz', 'hala@alnoor.com'), 'تحتوي جزءًا من البريد');
 assert.equal(passwordProblem('Zebra-5521-kx', 'root@x.com'), null);
 console.log('auth: كل الاختبارات نجحت');
+//
