@@ -25,7 +25,7 @@ results = []
 def check(name, cond):
     results.append((name, bool(cond))); print(("✔ " if cond else "✘ ") + name)
 
-SECTIONS = {"patients": "#s-patients", "p-form": "#p-form", "appts": "#s-appts", "a-form": "#a-form", "staff": "#s-staff", "audit": "#s-audit", "platform": "#s-platform", "paudit": "#s-paudit", "account": "#s-account"}
+SECTIONS = {"patients": "#s-patients", "p-form": "#p-form", "appts": "#s-appts", "a-form": "#a-form", "staff": "#s-staff", "audit": "#s-audit", "platform": "#s-platform", "paudit": "#s-paudit", "account": "#s-account", "invoices": "#s-invoices", "inv-form": "#inv-form", "pfile": "#s-pfile"}
 
 def visible(page):
     return {k for k, sel in SECTIONS.items() if page.is_visible(sel)}
@@ -88,6 +88,9 @@ with sync_playwright() as p:
     page.select_option("#tenants .s-role", "reception"); page.click("#tenants button[data-act=s-add]")
     page.locator("#tenants .detail", has_text="lina@alafia.com").wait_for()
     check("إضافة موظف من لوحة المنصة", "لينا" in page.inner_text("#tenants .detail"))
+    page.locator("#tenants .detail tr", has_text="doc@alafia.com").locator("button[data-act=s-perms]").click()
+    page.locator("#tenants .perm-box input[data-perm='staff.manage']").wait_for()
+    check("مدير المنصة: يمنح الصلاحيات الحساسة (خانتها غير معطّلة)", not page.locator("#tenants .perm-box input[data-perm='staff.manage']").is_disabled())
     page.screenshot(path="/tmp/ui-platform-manage.png", full_page=True)
     page.once("dialog", lambda d: d.accept("Violet-new-7788"))
     page.locator("#tenants .detail tr", has_text="lina@alafia.com").locator("button[data-act=s-pass]").click()
@@ -103,7 +106,7 @@ with sync_playwright() as p:
 
     # مدير المستشفى: كل أقسام مستشفاه
     page.click("#logout"); login(page, "alafia", "admin@alafia.com", "Platform-reset-pass-9")
-    check("المدير يرى المرضى والنموذج والمواعيد والحجز والموظفين والسجل", visible(page) == {"patients", "p-form", "appts", "a-form", "staff", "audit", "account"})
+    check("المدير يرى المرضى والنموذج والمواعيد والحجز والموظفين والسجل", visible(page) == {"patients", "p-form", "appts", "a-form", "staff", "audit", "invoices", "account"})
     page.locator("#audit", has_text="دخول").wait_for()
     check("سجل النشاط يعرض أحداثًا بأسماء عربية", "دخول" in page.inner_text("#audit"))
     page.screenshot(path="/tmp/ui-admin.png", full_page=True)
@@ -116,6 +119,12 @@ with sync_playwright() as p:
     page.click("#do-appt"); page.locator("#appts", has_text="10:00").wait_for()
     check("الاستقبال يرى اسم الطبيب في صف الموعد", "د. منتصر" in page.inner_text("#appts"))
     check("اسم مريض خبيث يُعرض نصًا لا وسومًا (XSS)", page.locator("#patients img, #patients b").count() == 0 and page.evaluate("() => window.__xss") is None and "onerror" in page.inner_text("#patients"))
+    check("الاستقبال: أزرار التعديل بلا زر السجل الطبي", page.locator("#patients button[data-act=edit]").count() >= 1 and page.locator("#patients button[data-act=file]").count() == 0)
+    page.locator("#patients tr", has_text="سارة عثمان").locator("button[data-act=edit]").click()
+    check("الاستقبال: النموذج يمتلئ ببيانات المريض", page.input_value("#p-name") == "سارة عثمان")
+    page.fill("#p-phone", "0955555555"); page.click("#do-patient")
+    page.locator("#patients", has_text="0955555555").wait_for()
+    check("الاستقبال: تعديل بيانات مريض", page.input_value("#p-name") == "")
     check("الاستقبال يرى زر الإلغاء", page.locator("#appts button[data-st=cancelled]").count() == 1)
     page.screenshot(path="/tmp/ui-reception.png", full_page=True)
 
@@ -127,13 +136,35 @@ with sync_playwright() as p:
     check("الطبيب: رأس الجدول المريض فقط", page.inner_text("#appts-th").strip() == "المريض")
     check("الطبيب: لا يرى اسمه في كل صف", "د. منتصر" not in page.inner_text("#appts"))
     check("الطبيب: يرى سبب الزيارة", "كشف" in page.inner_text("#appts"))
+    check("الطبيب: لا زر تعديل المرضى", page.locator("#patients button[data-act=edit]").count() == 0)
+    page.locator("#patients tr", has_text="محمد آدم").locator("button[data-act=file]").click()
+    page.locator("#s-pfile").wait_for(state="visible")
+    check("الطبيب: يفتح السجل الطبي ويرى نموذج الكتابة", page.is_visible("#pf-form") and "محمد آدم" in page.inner_text("#pf-title"))
+    page.fill("#pf-dx", "التهاب حلق"); page.fill("#pf-rx", "أموكسيسيلين 500"); page.click("#do-visit")
+    page.locator("#pf-list", has_text="التهاب حلق").wait_for()
+    check("الطبيب: الزيارة تظهر باسمه", "د. منتصر" in page.inner_text("#pf-list") and "أموكسيسيلين" in page.inner_text("#pf-list"))
     page.screenshot(path="/tmp/ui-doctor.png", full_page=True)
 
     # المحاسب: قائمة المرضى فقط
     page.click("#logout"); login(page, "alafia", "acc@alafia.com", "account1234")
-    check("المحاسب: قائمة المرضى فقط", visible(page) == {"patients", "account"})
+    check("المحاسب: قائمة المرضى فقط", visible(page) == {"patients", "invoices", "inv-form", "account"})
     body = page.inner_text("body")
     check("المحاسب: لا يرى كلمات الحجز أو الموظفين", all(w not in body for w in ["حجز موعد", "إضافة موظف", "تسجيل مريض"]))
+    check("المحاسب: نموذج الفواتير وقائمتها", page.is_visible("#inv-form") and page.is_visible("#s-invoices"))
+    page.wait_for_selector("#inv-patient option", state="attached")
+    page.fill("#inv-total", "5000"); page.click("#do-invoice")
+    page.locator("#invoices", has_text="0 / 5000").wait_for()
+    page.once("dialog", lambda d: d.accept("2000"))
+    page.locator("#invoices button[data-act=collect]").first.click()
+    page.locator("#invoices", has_text="2000 / 5000").wait_for()
+    check("المحاسب: تحصيل دفعة جزئية", True)
+    check("المحاسب: لا زر إلغاء لفاتورة عليها دفعة", page.locator("#invoices button[data-act=void]").count() == 0)
+    page.fill("#inv-total", "100"); page.click("#do-invoice")
+    page.locator("#invoices button[data-act=void]").first.wait_for()
+    page.once("dialog", lambda d: d.accept())
+    page.locator("#invoices button[data-act=void]").first.click()
+    page.locator("#invoices", has_text="ملغاة").wait_for()
+    check("المحاسب: إلغاء فاتورة بلا دفعات", "ملغاة" in page.inner_text("#invoices"))
     page.screenshot(path="/tmp/ui-accountant.png", full_page=True)
     page.fill("#acc-current", "account1234"); page.fill("#acc-new", "Account-new-9915"); page.click("#do-pass")
     page.locator("#msg", has_text="تم تغيير كلمة المرور").wait_for()
@@ -141,9 +172,35 @@ with sync_playwright() as p:
     page.click("#logout"); login(page, "alafia", "acc@alafia.com", "Account-new-9915")
     check("الدخول بكلمة المرور الجديدة", page.is_visible("#s-patients"))
 
+    # المدير يخصّص صلاحيات شخص، فيظهر الأثر عند ذلك الشخص
+    page.click("#logout"); login(page, "alafia", "admin@alafia.com", "Platform-reset-pass-9")
+    check("المدير: لا نموذج فواتير ولا زر سجل طبي (فصل المهام)", not page.is_visible("#inv-form") and page.locator("#patients button[data-act=file]").count() == 0)
+    page.locator("#staff tr", has_text="rec@alafia.com").locator("button[data-act=perms]").click()
+    page.locator("#perm-panel input[data-perm='visits.read']").wait_for()
+    check("محرّر الصلاحيات: الحساسة معطّلة لمدير المستشفى", page.locator("#perm-panel input[data-perm='staff.manage']").is_disabled() and page.locator("#perm-panel input[data-perm='audit.view']").is_disabled())
+    check("محرّر الصلاحيات: القراءة الطبية غير مفعّلة افتراضيًا للاستقبال", not page.locator("#perm-panel input[data-perm='visits.read']").is_checked())
+    page.locator("#perm-panel").screenshot(path="/tmp/ui-perms.png")
+    page.locator("#perm-panel input[data-perm='visits.read']").check()
+    page.click("#perm-panel button[data-act=perm-save]")
+    page.locator("#staff tr", has_text="rec@alafia.com").locator(".badge").wait_for()
+    check("بعد الحفظ تظهر علامة «مخصص» على الموظف", True)
+    page.click("#logout"); login(page, "alafia", "rec@alafia.com", "recept1234")
+    check("الاستقبال بعد المنح: يرى زر السجل الطبي", page.locator("#patients button[data-act=file]").count() >= 1)
+    page.locator("#patients tr", has_text="محمد آدم").locator("button[data-act=file]").first.click()
+    page.locator("#s-pfile").wait_for(state="visible")
+    check("الاستقبال بعد المنح: يقرأ ولا يكتب", "التهاب حلق" in page.inner_text("#pf-list") and not page.is_visible("#pf-form"))
+
     # خروج: لا بقايا بيانات على الشاشة
     page.click("#logout")
     check("بعد الخروج: لا أقسام ظاهرة", visible(page) == set())
+
+    # ملف ناقص في النشر: الخادم يردّ بصفحة HTML بدل JSON، فيجب أن تظهر رسالة واضحة لا خطأ برمجي
+    page.route("**/api/audit", lambda route: route.fulfill(status=200, content_type="text/html", body="<html>fallback</html>"))
+    login(page, "alafia", "admin@alafia.com", "Platform-reset-pass-9")
+    page.locator("#msg", has_text="ملف ناقص").wait_for()
+    check("ملف ناقص في النشر: رسالة واضحة بدل events.map", "events.map" not in page.inner_text("#msg") and "/api/audit" in page.inner_text("#msg"))
+    check("باقي الصفحة تعمل رغم النقص", page.is_visible("#s-patients") and page.is_visible("#s-staff"))
+    page.unroute("**/api/audit")
     check("لا أخطاء جافاسكربت في الصفحة", not errors)
     check("لا انتهاكات CSP غير المقصودة (ما عدا حقن الاختبار)", len([m for m in csp_msgs if "inline script" not in m.lower()]) == 0)
     b.close()
