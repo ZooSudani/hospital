@@ -1,4 +1,4 @@
-// اختبار شامل: يمرّ كل طلب عبر الـ middleware ثم الـ handler الحقيقي، على SQLite محلية.
+// اختبار  شامل: يمرّ كل طلب عبر الـ middleware ثم الـ handler الحقيقي، على SQLite محلية.
 import assert from 'node:assert/strict';
 import { makeDb } from './d1-shim.js';
 import { onRequest as middleware } from '../functions/_middleware.js';
