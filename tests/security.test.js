@@ -1,4 +1,4 @@
-// اختبارات الأمان: التخمين، الجلسات، الصلاحيات، سجل النشاط، تسريب الأخطاء، وحجم الطلب.
+// اختبارات الأمان: التخمين، الجلسات، الصلاحيات، سجل النشاط، تسريب  الأخطاء، وحجم الطلب.
 import assert from 'node:assert/strict';
 import { makeDb } from './d1-shim.js';
 import { signToken } from '../lib/auth.js';
