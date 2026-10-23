@@ -27,6 +27,7 @@ export async function onRequestPatch({ request, params, env, data }) {
   if (b.role !== undefined) {
     if (!ROLES.includes(b.role)) return fail(400, 'الدور غير صحيح');
     sets.push('role = ?'); args.push(b.role); changed.push('role');
+    if (b.role !== user.role) sets.push('perm_overrides = NULL'); // تغيير الدور يصفّر التخصيصات القديمة
   }
   if (b.active !== undefined) { sets.push('active = ?'); args.push(b.active ? 1 : 0); changed.push('active'); }
   if (b.password !== undefined) {
