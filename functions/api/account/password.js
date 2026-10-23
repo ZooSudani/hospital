@@ -3,7 +3,7 @@ import { auditRaw } from '../../../lib/audit.js';
 import { fail, json, readJson } from '../../../lib/http.js';
 import { clearFailures, isLocked, recordFailure } from '../../../lib/throttle.js';
 
-// تغيير كلمة مرور المستخدم لنفسه (أي دور،  ومنهم مدير المنصة).
+// تغيير كلمة مرور المستخدم لنفسه (أي دور، ومنهم مدير المنصة).
 // يتطلب كلمة المرور الحالية، فلا تكفي جلسة مسروقة لتغييرها. وينجح التغيير بجلسة جديدة تحل محل القديمة.
 export async function onRequestPost({ request, env, data }) {
   const b = await readJson(request);
