@@ -1,6 +1,6 @@
 import { can, fail, json } from '../../../lib/http.js';
 
-// نشاط كل المستشفيات لمدير المنصة (آخر 100 حدث). أحداث المرضى والمواعيد تظهر دون أي تفاصيل أو معرّفات.
+// نشاط كل المستشفيات لمدير المنصة (آخر 100 حدث). أحداث المرضى والمواعيد  تظهر دون أي تفاصيل أو معرّفات.
 const DETAIL_VISIBLE = /^(tenant\.|login\.|staff\.|platform\.|account\.)/;
 
 export async function onRequestGet({ env, data }) {
