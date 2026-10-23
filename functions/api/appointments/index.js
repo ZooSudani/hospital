@@ -1,4 +1,5 @@
-import { can, fail, json, readJson } from '../../../lib/http.js';
+import { fail, json, readJson } from '../../../lib/http.js';
+import { has } from '../../../lib/permissions.js';
 import { repoFor } from '../../../lib/repo.js';
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -14,15 +15,16 @@ function normalizeSlot(v) {
 }
 
 export async function onRequestGet({ request, env, data }) {
-  if (!can(data.auth, 'admin', 'reception', 'doctor')) return fail(403, 'غير مسموح');
+  if (!has(data.auth, 'appointments.read')) return fail(403, 'غير مسموح');
   const date = new URL(request.url).searchParams.get('date') || todayKhartoum();
   if (!DATE.test(date)) return fail(400, 'التاريخ بصيغة YYYY-MM-DD');
-  const doctorOnly = data.auth.role === 'doctor' ? data.auth.uid : null;
+  // من لا يملك appointments.all يرى مواعيده هو فقط
+  const doctorOnly = has(data.auth, 'appointments.all') ? null : data.auth.uid;
   return json({ date, appointments: await repoFor(env, data.auth).appointments.list(date, doctorOnly) });
 }
 
 export async function onRequestPost({ request, env, data }) {
-  if (!can(data.auth, 'admin', 'reception')) return fail(403, 'غير مسموح');
+  if (!has(data.auth, 'appointments.book')) return fail(403, 'غير مسموح');
   const b = await readJson(request);
   if (!b) return fail(400, 'طلب غير صالح');
 
@@ -38,6 +40,7 @@ export async function onRequestPost({ request, env, data }) {
 
   try {
     const created = await repo.appointments.create({ patient_id: patient.id, doctor_id: doctor.id, starts_at, reason });
+    await repo.audit.log('appointment.create', created.id, starts_at);
     return json(created, 201);
   } catch (e) {
     // الفهرس الفريد (tenant_id, doctor_id, starts_at) للمواعيد المحجوزة يمنع الحجز المزدوج في القاعدة نفسها
