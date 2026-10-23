@@ -9,25 +9,20 @@ async function api(path, { method = 'GET', body } = {}) {
     headers: { 'content-type': 'application/json', ...(session ? { authorization: 'Bearer ' + session.token } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
-  const data = await res.json().catch(() => ({}));
+  const isJson = (res.headers.get('content-type') || '').includes('application/json');
+  const data = isJson ? await res.json().catch(() => ({})) : null;
   if (res.status === 401 && session) { logout(); say('انتهت الجلسة. سجّل الدخول مرة أخرى', 'err'); }
+  if (!isJson) throw new Error('ردّ الخادم غير متوقع. غالبًا ملف ناقص في النشر: ' + path.split('?')[0]);
   if (!res.ok) throw new Error(data.error || 'حدث خطأ غير متوقع');
   return data;
 }
 
-// ما يحق لكل دور رؤيته أو فعله في الواجهة. الخادم يفرض الصلاحيات فعليًا، وهذه الخريطة تمنع إظهار ما لا يخص المستخدم.
-const CAN = {
-  viewPatients: ['admin', 'reception', 'doctor', 'accountant'],
-  registerPatient: ['admin', 'reception'],
-  viewAppts: ['admin', 'reception', 'doctor'],
-  bookAppt: ['admin', 'reception'],
-  markAppt: ['admin', 'reception', 'doctor'],
-  cancelAppt: ['admin', 'reception'],
-  manageStaff: ['admin'],
-  viewAudit: ['admin'],
-};
-const can = (cap) => !!session && CAN[cap].includes(session.user.role);
+// صلاحيات المستخدم تأتي من الخادم (الدخول و/api/me) وهي المصدر الوحيد: لا قوائم أدوار مكررة هنا.
+// الخادم يفرضها فعليًا، وهذه الدالة تمنع إظهار ما لا يخص المستخدم.
+const has = (perm) => !!session && Array.isArray(session.permissions) && session.permissions.includes(perm);
 const adminMode = () => location.hash === '#admin';
+let currentFile = null;      // المريض المفتوح سجله الطبي
+let editingPatient = null;   // المريض الذي يجري تعديله
 
 const roleNames = { platform_admin: 'مدير المنصة', admin: 'مدير المستشفى', doctor: 'طبيب', reception: 'استقبال', accountant: 'محاسب' };
 
@@ -39,17 +34,24 @@ function render() {
   $('platform-hint').hidden = !adminMode();
   if (on || !adminMode()) $('s-setup').hidden = true;
   $('s-platform').hidden = !(on && session.user.role === 'platform_admin');
-  $('s-patients').hidden = !(tenant && can('viewPatients'));
-  $('p-form').hidden = !(tenant && can('registerPatient'));
+  $('s-patients').hidden = !(tenant && has('patients.read'));
+  $('p-form').hidden = !(tenant && (has('patients.create') || has('patients.update')));
+  $('p-title').textContent = editingPatient ? 'تعديل بيانات المريض' : (has('patients.create') ? 'تسجيل مريض' : 'تعديل بيانات مريض (اختر «تعديل» من القائمة)');
   $('p-list-title').classList.toggle('mt', !$('p-form').hidden);
-  $('s-appts').hidden = !(tenant && can('viewAppts'));
-  $('a-form').hidden = !(tenant && can('bookAppt'));
+  if (!(tenant && has('visits.read'))) currentFile = null;
+  $('s-pfile').hidden = !currentFile;
+  $('pf-form').hidden = !has('visits.write');
+  $('s-appts').hidden = !(tenant && has('appointments.read'));
+  $('a-form').hidden = !(tenant && has('appointments.book'));
   $('a-list-title').classList.toggle('mt', !$('a-form').hidden);
-  $('s-staff').hidden = !(tenant && can('manageStaff'));
-  $('s-audit').hidden = !(tenant && can('viewAudit'));
+  $('s-invoices').hidden = !(tenant && has('invoices.read'));
+  $('inv-form').hidden = !(tenant && has('invoices.create'));
+  $('inv-list-title').classList.toggle('mt', !$('inv-form').hidden);
+  $('s-staff').hidden = !(tenant && has('staff.manage'));
+  $('s-audit').hidden = !(tenant && has('audit.view'));
   $('s-account').hidden = !on;
   $('s-paudit').hidden = !(on && session.user.role === 'platform_admin');
-  $('appts-th').textContent = on && session.user.role === 'doctor' ? 'المريض' : 'المريض والطبيب';
+  $('appts-th').textContent = has('appointments.all') || !on ? 'المريض والطبيب' : 'المريض';
   $('who').textContent = on ? `${session.user.name} · ${roleNames[session.user.role]}${session.tenant ? ' · ' + session.tenant.name : ''}` : 'لم تسجل الدخول';
   if (!$('s-platform').hidden) loadTenants();
   if (!$('s-patients').hidden) loadPatients();
@@ -57,10 +59,11 @@ function render() {
   if (!$('s-audit').hidden) loadAudit();
   if (!$('s-paudit').hidden) loadPlatformAudit();
   if (!$('s-appts').hidden) { initApptDates(); loadAppts(); }
-  if (!$('a-form').hidden) loadApptForm();
+  if (!$('a-form').hidden || !$('inv-form').hidden) loadPatientOptions();
+  if (!$('s-invoices').hidden) loadInvoices();
 }
 
-function logout() { session = null; sessionStorage.removeItem('session'); render(); }
+function logout() { session = null; currentFile = null; editingPatient = null; sessionStorage.removeItem('session'); render(); }
 
 $('logout').onclick = logout;
 $('toggle-setup').onclick = () => { $('s-setup').hidden = !$('s-setup').hidden; };
@@ -79,6 +82,47 @@ $('do-setup').onclick = async () => {
     say('تم إنشاء مدير المنصة. سجّل الدخول برمز platform', 'ok'); $('s-setup').hidden = true; $('slug').value = 'platform'; $('email').value = $('su-email').value;
   } catch (e) { say(e.message, 'err'); }
 };
+
+// ===== محرّر الصلاحيات لكل شخص =====
+// يعرض كتالوج الصلاحيات من الخادم، ويحسب الفرق عن افتراضيات الدور (منح/سحب) عند الحفظ.
+async function openPermEditor(box, url, afterSave) {
+  const info = await api(url);
+  const checked = new Set(info.effective);
+  const grantable = new Set(info.grantable);
+  const groups = {};
+  for (const p of info.catalog) (groups[p.group] ||= []).push(p);
+  const body = Object.entries(groups).map(([g, list]) => `<div class="pgroup"><b>${esc(g)}</b>${list.map((p) => {
+    const isDefault = info.defaults.includes(p.key);
+    const toggle = info.editable && (isDefault || grantable.has(p.key)); // سحب ما يملكه الدور مسموح دائمًا، ومنح الحساسة مقيَّد
+    const custom = isDefault !== checked.has(p.key) ? ' <span class="badge ok">مخصص</span>' : '';
+    return `<label class="perm"><input type="checkbox" data-perm="${esc(p.key)}" ${checked.has(p.key) ? 'checked' : ''} ${toggle ? '' : 'disabled'}><span>${esc(p.label)}${p.restricted ? ' <small>(حساسة)</small>' : ''}${custom}</span></label>`;
+  }).join('')}</div>`).join('');
+  box.hidden = false;
+  box.innerHTML = `<h3>صلاحيات ${esc(info.name)} (${esc(roleNames[info.role] || info.role)})</h3>${body}` + (info.editable
+    ? '<div class="actions"><button class="mini" data-act="perm-save">حفظ الصلاحيات</button><button class="mini" data-act="perm-reset">استعادة الافتراضي</button><button class="mini" data-act="perm-close">إغلاق</button></div>'
+    : '<p><small>لا يمكن تعديل هذه الصلاحيات من حسابك.</small></p><div class="actions"><button class="mini" data-act="perm-close">إغلاق</button></div>');
+  box.onclick = async (ev) => {
+    const b = ev.target.closest('button'); if (!b || !b.dataset.act || !b.dataset.act.startsWith('perm-')) return;
+    ev.stopPropagation();
+    try {
+      if (b.dataset.act === 'perm-close') { box.hidden = true; box.innerHTML = ''; return; }
+      let payload = {};
+      if (b.dataset.act === 'perm-save') {
+        const grant = [], deny = [];
+        box.querySelectorAll('input[data-perm]').forEach((c) => {
+          const isDefault = info.defaults.includes(c.dataset.perm);
+          if (c.checked && !isDefault) grant.push(c.dataset.perm);
+          if (!c.checked && isDefault) deny.push(c.dataset.perm);
+        });
+        payload = { grant, deny };
+      }
+      await api(url, { method: 'PUT', body: payload });
+      say(b.dataset.act === 'perm-reset' ? 'أُعيدت الصلاحيات إلى الافتراضي' : 'تم حفظ الصلاحيات', 'ok');
+      await openPermEditor(box, url, afterSave);
+      if (afterSave) afterSave();
+    } catch (e) { say(e.message, 'err'); }
+  };
+}
 
 // ===== لوحة مدير المنصة =====
 let openTenant = null; // المستشفى المفتوح لإدارة موظفيه
@@ -108,11 +152,19 @@ async function loadTenants() {
   } catch (e) { say(e.message, 'err'); }
 }
 
+// بعد حفظ صلاحيات من لوحة المنصة نحدّث قائمة الموظفين دون إغلاق المحرّر
+async function manageTenantKeepEditor(id) {
+  const box = $('pb-' + id); const keep = box ? box.innerHTML : null; const handler = box ? box.onclick : null;
+  await manageTenant(id);
+  const nb = $('pb-' + id);
+  if (nb && keep) { nb.innerHTML = keep; nb.hidden = false; nb.onclick = handler; }
+}
+
 async function manageTenant(id) {
   const box = $('d-' + id); if (!box) return;
   const { staff } = await api(`/api/platform/tenants/${id}/staff`);
   openTenant = id;
-  const rows = staff.map((u) => `<tr class="${u.active ? '' : 'off'}"><td>${esc(u.name)}<br><small dir="ltr">${esc(u.email)}</small><br><small>آخر دخول: <span dir="ltr">${esc(u.last_login ? khartoumTime(u.last_login) : 'لم يدخل')}</span></small></td><td>${roleNames[u.role] || esc(u.role)}${u.active ? '' : ' (موقوف)'}</td><td><button class="mini" data-act="s-toggle" data-id="${esc(id)}" data-uid="${esc(u.id)}" data-active="${u.active}">${u.active ? 'إيقاف' : 'تفعيل'}</button><button class="mini" data-act="s-pass" data-id="${esc(id)}" data-uid="${esc(u.id)}">كلمة مرور</button><button class="mini" data-act="s-unlock" data-id="${esc(id)}" data-uid="${esc(u.id)}">فك القفل</button></td></tr>`).join('');
+  const rows = staff.map((u) => `<tr class="${u.active ? '' : 'off'}"><td>${esc(u.name)}<br><small dir="ltr">${esc(u.email)}</small><br><small>آخر دخول: <span dir="ltr">${esc(u.last_login ? khartoumTime(u.last_login) : 'لم يدخل')}</span></small></td><td>${roleNames[u.role] || esc(u.role)}${u.custom ? ' <span class="badge ok">مخصص</span>' : ''}${u.active ? '' : ' (موقوف)'}</td><td><button class="mini" data-act="s-toggle" data-id="${esc(id)}" data-uid="${esc(u.id)}" data-active="${u.active}">${u.active ? 'إيقاف' : 'تفعيل'}</button><button class="mini" data-act="s-pass" data-id="${esc(id)}" data-uid="${esc(u.id)}">كلمة مرور</button><button class="mini" data-act="s-unlock" data-id="${esc(id)}" data-uid="${esc(u.id)}">فك القفل</button><button class="mini" data-act="s-perms" data-id="${esc(id)}" data-uid="${esc(u.id)}">الصلاحيات</button></td></tr>`).join('');
   box.hidden = false;
   box.innerHTML = `<h3>الموظفون</h3><table><thead><tr><th>الموظف</th><th>الدور</th><th></th></tr></thead><tbody>${rows}</tbody></table>
     <h3>إضافة موظف</h3>
@@ -120,15 +172,18 @@ async function manageTenant(id) {
     <input class="s-email" type="email" dir="ltr" aria-label="البريد الإلكتروني" placeholder="البريد الإلكتروني">
     <input class="s-pass" type="password" autocomplete="new-password" dir="ltr" aria-label="كلمة المرور" placeholder="كلمة المرور">
     <select class="s-role" aria-label="الدور"><option value="admin">مدير مستشفى</option><option value="doctor">طبيب</option><option value="reception">استقبال</option><option value="accountant">محاسب</option></select>
-    <div class="actions"><button class="mini" data-act="s-add" data-id="${esc(id)}">إضافة</button><button class="mini" data-act="close" data-id="${esc(id)}">إغلاق</button></div>`;
+    <div class="actions"><button class="mini" data-act="s-add" data-id="${esc(id)}">إضافة</button><button class="mini" data-act="close" data-id="${esc(id)}">إغلاق</button></div>
+    <div class="perm-box card" id="pb-${esc(id)}" hidden></div>`;
 }
 
 $('tenants').onclick = async (ev) => {
   const b = ev.target.closest('button'); if (!b) return;
   const { act, id, uid } = b.dataset;
   const patch = (path, body) => api(path, { method: 'PATCH', body });
+  if (act && act.startsWith('perm-')) return; // أزرار محرّر الصلاحيات يعالجها المحرّر نفسه
   try {
     if (act === 'manage') { await manageTenant(id); return; }
+    if (act === 's-perms') { await openPermEditor($('pb-' + id), `/api/platform/tenants/${id}/staff/${uid}/permissions`, () => manageTenantKeepEditor(id)); return; }
     if (act === 'close') { openTenant = null; $('d-' + id).hidden = true; return; }
     if (act === 'toggle') {
       const next = b.dataset.status === 'active' ? 'suspended' : 'active';
@@ -199,17 +254,121 @@ $('do-tenant').onclick = async () => {
   } catch (e) { say(e.message, 'err'); }
 };
 
+let patientCache = {};
+
 async function loadPatients() {
   try {
     const { patients } = await api('/api/patients?q=' + encodeURIComponent($('q').value));
-    $('patients').innerHTML = patients.map((p) => `<tr><td dir="ltr">${esc(p.file_no)}</td><td>${esc(p.full_name)}</td><td dir="ltr">${esc(p.phone || '')}</td></tr>`).join('') || `<tr><td colspan="3">${can('registerPatient') ? 'لا يوجد مرضى. سجّل أول مريض من النموذج أعلاه' : 'لا يوجد مرضى بعد'}</td></tr>`;
+    patientCache = Object.fromEntries(patients.map((p) => [p.id, p]));
+    $('patients').innerHTML = patients.map((p) => {
+      const acts = (has('visits.read') ? `<button class="mini" data-act="file" data-id="${esc(p.id)}">السجل الطبي</button>` : '') + (has('patients.update') ? `<button class="mini" data-act="edit" data-id="${esc(p.id)}">تعديل</button>` : '');
+      return `<tr><td dir="ltr">${esc(p.file_no)}</td><td>${esc(p.full_name)}</td><td dir="ltr">${esc(p.phone || '')}</td><td>${acts}</td></tr>`;
+    }).join('') || `<tr><td colspan="4">${has('patients.create') ? 'لا يوجد مرضى. سجّل أول مريض من النموذج أعلاه' : 'لا يوجد مرضى بعد'}</td></tr>`;
   } catch (e) { say(e.message, 'err'); }
+}
+
+function resetPatientForm() {
+  editingPatient = null;
+  ['p-name', 'p-phone', 'p-birth', 'p-gender'].forEach((i) => ($(i).value = ''));
+  $('do-patient').textContent = 'حفظ المريض'; $('p-cancel').hidden = true;
+  $('p-title').textContent = has('patients.create') ? 'تسجيل مريض' : 'تعديل بيانات مريض (اختر «تعديل» من القائمة)';
 }
 
 $('do-patient').onclick = async () => {
   try {
-    const r = await api('/api/patients', { method: 'POST', body: { full_name: $('p-name').value, phone: $('p-phone').value, birth_date: $('p-birth').value, gender: $('p-gender').value } });
-    say('تم حفظ المريض، رقم الملف ' + r.file_no, 'ok'); ['p-name','p-phone','p-birth','p-gender'].forEach((i) => ($(i).value = '')); loadPatients(); if (!$('a-form').hidden) loadApptForm();
+    const body = { full_name: $('p-name').value, phone: $('p-phone').value, birth_date: $('p-birth').value, gender: $('p-gender').value };
+    if (editingPatient) {
+      await api('/api/patients/' + editingPatient, { method: 'PATCH', body });
+      say('تم حفظ التعديلات', 'ok');
+    } else {
+      if (!has('patients.create')) { say('لا تملك صلاحية تسجيل مرضى جدد', 'err'); return; }
+      const r = await api('/api/patients', { method: 'POST', body });
+      say('تم حفظ المريض، رقم الملف ' + r.file_no, 'ok');
+    }
+    resetPatientForm(); loadPatients(); if (!$('a-form').hidden || !$('inv-form').hidden) loadPatientOptions();
+  } catch (e) { say(e.message, 'err'); }
+};
+
+$('p-cancel').onclick = resetPatientForm;
+
+$('patients').onclick = async (ev) => {
+  const b = ev.target.closest('button'); if (!b) return;
+  if (b.dataset.act === 'edit') {
+    const p = patientCache[b.dataset.id]; if (!p) return;
+    editingPatient = p.id;
+    $('p-name').value = p.full_name; $('p-phone').value = p.phone || ''; $('p-birth').value = p.birth_date || ''; $('p-gender').value = p.gender || '';
+    $('do-patient').textContent = 'حفظ التعديلات'; $('p-cancel').hidden = false; $('p-title').textContent = 'تعديل بيانات المريض';
+    $('p-form').scrollIntoView();
+  } else if (b.dataset.act === 'file') {
+    await openFile(b.dataset.id);
+  }
+};
+
+// ===== الفواتير =====
+const invStatus = { open: 'مفتوحة', paid: 'مسددة', void: 'ملغاة' };
+
+async function loadInvoices() {
+  try {
+    const { invoices } = await api('/api/invoices');
+    $('invoices').innerHTML = invoices.map((i) => {
+      let actions = `<small>${invStatus[i.status] || esc(i.status)}</small>`;
+      if (i.status === 'open') {
+        actions = (has('invoices.collect') ? `<button class="mini" data-act="collect" data-id="${esc(i.id)}" data-left="${i.total - i.paid}">تحصيل</button>` : '')
+          + (has('invoices.void') && i.paid === 0 ? `<button class="mini" data-act="void" data-id="${esc(i.id)}">إلغاء</button>` : '')
+          || actions;
+      }
+      return `<tr class="${i.status === 'open' ? '' : 'off'}"><td>${esc(i.patient_name)}<br><small dir="ltr">${esc(khartoumTime(i.created_at))}</small><br><small>${invStatus[i.status] || esc(i.status)}</small></td><td dir="ltr">${i.paid} / ${i.total}</td><td>${actions}</td></tr>`;
+    }).join('') || '<tr><td colspan="3">لا توجد فواتير بعد</td></tr>';
+  } catch (e) { say(e.message, 'err'); }
+}
+
+$('do-invoice').onclick = async () => {
+  try {
+    await api('/api/invoices', { method: 'POST', body: { patient_id: $('inv-patient').value, total: Number($('inv-total').value) } });
+    $('inv-total').value = ''; say('تم إصدار الفاتورة', 'ok'); loadInvoices();
+  } catch (e) { say(e.message, 'err'); }
+};
+
+$('invoices').onclick = async (ev) => {
+  const b = ev.target.closest('button'); if (!b) return;
+  try {
+    if (b.dataset.act === 'collect') {
+      const v = prompt(`المبلغ المحصَّل (المتبقي ${b.dataset.left})`, b.dataset.left);
+      if (!v) return;
+      await api(`/api/invoices/${b.dataset.id}/pay`, { method: 'POST', body: { amount: Number(v) } });
+      say('تم تسجيل الدفعة', 'ok');
+    } else if (b.dataset.act === 'void') {
+      if (!confirm('إلغاء هذه الفاتورة؟')) return;
+      await api('/api/invoices/' + b.dataset.id, { method: 'PATCH', body: { status: 'void' } });
+      say('تم إلغاء الفاتورة', 'ok');
+    }
+    loadInvoices();
+  } catch (e) { say(e.message, 'err'); }
+};
+
+// ===== السجل الطبي =====
+async function openFile(id) {
+  try {
+    const { patient, visits } = await api(`/api/patients/${id}/visits`);
+    currentFile = id;
+    $('pf-title').textContent = `السجل الطبي: ${patient.full_name} (ملف ${patient.file_no})`;
+    $('pf-list').innerHTML = visits.map((v) => `<div class="visit"><small dir="ltr">${esc(khartoumTime(v.created_at))}</small> · <small>${esc(v.doctor_name)}</small>
+      ${v.diagnosis ? `<div><b>التشخيص</b><div class="pre">${esc(v.diagnosis)}</div></div>` : ''}
+      ${v.notes ? `<div><b>الملاحظات</b><div class="pre">${esc(v.notes)}</div></div>` : ''}
+      ${v.prescription ? `<div><b>الوصفة</b><div class="pre">${esc(v.prescription)}</div></div>` : ''}</div>`).join('') || '<p>لا توجد زيارات مسجلة بعد</p>';
+    $('s-pfile').hidden = false; $('pf-form').hidden = !has('visits.write');
+    $('s-pfile').scrollIntoView();
+  } catch (e) { say(e.message, 'err'); }
+}
+
+$('pf-close').onclick = () => { currentFile = null; $('s-pfile').hidden = true; };
+
+$('do-visit').onclick = async () => {
+  try {
+    await api(`/api/patients/${currentFile}/visits`, { method: 'POST', body: { diagnosis: $('pf-dx').value, notes: $('pf-notes').value, prescription: $('pf-rx').value } });
+    ['pf-dx', 'pf-notes', 'pf-rx'].forEach((i) => ($(i).value = ''));
+    say('تم حفظ الزيارة في السجل الطبي', 'ok');
+    await openFile(currentFile);
   } catch (e) { say(e.message, 'err'); }
 };
 
@@ -222,8 +381,8 @@ async function loadStaff() {
     $('staff').innerHTML = staff.map((u) => {
       const me = u.id === session.user.id;
       const actions = me ? '<small>حسابك</small>' :
-        `<button class="mini" data-act="toggle" data-id="${esc(u.id)}" data-active="${u.active}">${u.active ? 'إيقاف' : 'تفعيل'}</button><button class="mini" data-act="pass" data-id="${esc(u.id)}">كلمة مرور</button>`;
-      return `<tr class="${u.active ? '' : 'off'}"><td>${esc(u.name)}<br><small dir="ltr">${esc(u.email)}</small></td><td>${roleNames[u.role] || esc(u.role)}${u.active ? '' : ' (موقوف)'}</td><td>${actions}</td></tr>`;
+        `<button class="mini" data-act="toggle" data-id="${esc(u.id)}" data-active="${u.active}">${u.active ? 'إيقاف' : 'تفعيل'}</button><button class="mini" data-act="pass" data-id="${esc(u.id)}">كلمة مرور</button>${u.role === 'admin' ? '' : `<button class="mini" data-act="perms" data-id="${esc(u.id)}">الصلاحيات</button>`}`;
+      return `<tr class="${u.active ? '' : 'off'}"><td>${esc(u.name)}<br><small dir="ltr">${esc(u.email)}</small></td><td>${roleNames[u.role] || esc(u.role)}${u.custom ? ' <span class="badge ok">مخصص</span>' : ''}${u.active ? '' : ' (موقوف)'}</td><td>${actions}</td></tr>`;
     }).join('');
   } catch (e) { say(e.message, 'err'); }
 }
@@ -238,6 +397,7 @@ $('do-staff').onclick = async () => {
 $('staff').onclick = async (ev) => {
   const b = ev.target.closest('button'); if (!b) return;
   try {
+    if (b.dataset.act === 'perms') { await openPermEditor($('perm-panel'), `/api/staff/${b.dataset.id}/permissions`, loadStaff); return; }
     if (b.dataset.act === 'toggle') {
       await api('/api/staff/' + b.dataset.id, { method: 'PATCH', body: { active: b.dataset.active !== '1' } });
       say('تم تحديث الحالة', 'ok');
@@ -267,13 +427,21 @@ function initApptDates() {
   }
 }
 
-async function loadApptForm() {
+// خيارات المرضى والأطباء في نماذج الحجز والفواتير (تُحمَّل مرة واحدة لكل تحديث)
+async function loadPatientOptions() {
   try {
-    const [{ patients }, { doctors }] = await Promise.all([api('/api/patients'), api('/api/staff?role=doctor')]);
-    const keepP = $('a-patient').value, keepD = $('a-doctor').value;
-    $('a-patient').innerHTML = patients.length ? patients.map((p) => `<option value="${esc(p.id)}">${esc(p.full_name)} (ملف ${esc(p.file_no)})</option>`).join('') : '<option value="">لا يوجد مرضى بعد</option>';
-    $('a-doctor').innerHTML = doctors.length ? doctors.map((d) => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('') : `<option value="">${can('manageStaff') ? 'أضف طبيبًا أولًا من قسم الموظفين' : 'لا يوجد أطباء فعّالون. اطلب من مدير المستشفى إضافة طبيب'}</option>`;
-    if (keepP) $('a-patient').value = keepP; if (keepD) $('a-doctor').value = keepD;
+    const wantAppt = !$('a-form').hidden, wantInv = !$('inv-form').hidden;
+    const { patients } = await api('/api/patients');
+    const opts = patients.length ? patients.map((p) => `<option value="${esc(p.id)}">${esc(p.full_name)} (ملف ${esc(p.file_no)})</option>`).join('') : '<option value="">لا يوجد مرضى بعد</option>';
+    const fill = (id) => { const keep = $(id).value; $(id).innerHTML = opts; if (keep) $(id).value = keep; };
+    if (wantInv) fill('inv-patient');
+    if (wantAppt) {
+      fill('a-patient');
+      const { doctors } = await api('/api/staff?role=doctor');
+      const keepD = $('a-doctor').value;
+      $('a-doctor').innerHTML = doctors.length ? doctors.map((d) => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('') : `<option value="">${has('staff.manage') ? 'أضف طبيبًا أولًا من قسم الموظفين' : 'لا يوجد أطباء فعّالون. اطلب من مدير المستشفى إضافة طبيب'}</option>`;
+      if (keepD) $('a-doctor').value = keepD;
+    }
   } catch (e) { say(e.message, 'err'); }
 }
 
@@ -284,10 +452,10 @@ async function loadAppts() {
     $('appts').innerHTML = appointments.map((a) => {
       let actions = '';
       if (a.status === 'scheduled') {
-        actions = `<button class="mini" data-st="done" data-id="${esc(a.id)}">تمت</button><button class="mini" data-st="no_show" data-id="${esc(a.id)}">لم يحضر</button>`;
-        if (can('cancelAppt')) actions += `<button class="mini" data-st="cancelled" data-id="${esc(a.id)}">إلغاء</button>`;
+        if (has('appointments.complete')) actions = `<button class="mini" data-st="done" data-id="${esc(a.id)}">تمت</button><button class="mini" data-st="no_show" data-id="${esc(a.id)}">لم يحضر</button>`;
+        if (has('appointments.cancel')) actions += `<button class="mini" data-st="cancelled" data-id="${esc(a.id)}">إلغاء</button>`;
       } else actions = `<small>${statusNames[a.status]}</small>`;
-      const sub = [role === 'doctor' ? '' : a.doctor_name, a.reason].filter(Boolean).map(esc).join(' · ');
+      const sub = [has('appointments.all') ? a.doctor_name : '', a.reason].filter(Boolean).map(esc).join(' · ');
       return `<tr class="${a.status === 'scheduled' ? '' : 'off'}"><td dir="ltr">${esc(a.starts_at.slice(11))}</td><td>${esc(a.patient_name)}${sub ? '<br><small>' + sub + '</small>' : ''}</td><td>${actions}</td></tr>`;
     }).join('') || '<tr><td colspan="3">لا توجد مواعيد في هذا اليوم</td></tr>';
   } catch (e) { say(e.message, 'err'); }
@@ -314,6 +482,7 @@ $('appts').onclick = async (ev) => {
 const actionNames = {
   'login.ok': 'دخول', 'login.fail': 'محاولة دخول فاشلة', 'patient.create': 'تسجيل مريض', 'patient.view': 'فتح ملف مريض',
   'tenant.create': 'إنشاء مستشفى', 'tenant.update': 'تعديل مستشفى', 'account.password': 'تغيير كلمة مرور', 'platform.setup': 'إعداد المنصة', 'staff.create': 'إضافة موظف', 'staff.update': 'تعديل موظف', 'appointment.create': 'حجز موعد', 'appointment.status': 'تغيير حالة موعد',
+  'patient.update': 'تعديل بيانات مريض', 'visit.create': 'تسجيل زيارة طبية', 'visit.view': 'قراءة سجل طبي', 'invoice.create': 'إصدار فاتورة', 'invoice.pay': 'تحصيل دفعة', 'invoice.void': 'إلغاء فاتورة', 'staff.permissions': 'تعديل صلاحيات',
 };
 const khartoumTime = (utc) => new Date(new Date(utc.replace(' ', 'T') + 'Z').getTime() + 2 * 3600 * 1000).toISOString().slice(0, 16).replace('T', ' ');
 
@@ -321,12 +490,13 @@ async function loadAudit() {
   try {
     const { events } = await api('/api/audit');
     $('audit').innerHTML = events.map((e) => {
-      const who = e.user_name ? esc(e.user_name) : (e.action === 'login.fail' && e.detail ? esc(e.detail) : (e.action === 'tenant.create' || e.action === 'platform.setup' ? 'مدير المنصة' : 'غير معروف'));
-      const fieldNames = { name: 'الاسم', role: 'الدور', active: 'الحالة', password: 'كلمة المرور' };
+      const who = e.user_name ? esc(e.user_name) : (e.action === 'login.fail' && e.detail ? esc(e.detail) : 'مدير المنصة'); // الفاعل الذي لا سجل له داخل المستشفى هو مدير المنصة
+      const fieldNames = { name: 'الاسم', role: 'الدور', active: 'الحالة', password: 'كلمة المرور', full_name: 'الاسم', phone: 'الهاتف', birth_date: 'تاريخ الميلاد', gender: 'الجنس', notes: 'ملاحظات', status: 'الحالة', unlock: 'فك القفل', admin_password: 'كلمة مرور المدير' };
       let detail = e.detail || '';
       if (e.action === 'staff.create') detail = roleNames[detail] || detail;
-      else if (e.action === 'staff.update') detail = detail.split(',').map((f) => fieldNames[f] || f).join('، ');
+      else if (e.action === 'staff.update' || e.action === 'patient.update' || e.action === 'tenant.update') detail = detail.split(',').map((f) => fieldNames[f] || f).join('، ');
       else if (e.action === 'appointment.status') detail = statusNames[detail] || detail;
+      else if (e.action === 'visit.view' || e.action === 'visit.create') detail = '';
       const extra = e.action === 'login.fail' || !detail ? '' : ' · ' + esc(detail);
       return `<tr><td dir="ltr">${esc(khartoumTime(e.created_at))}</td><td>${who}<br><small>${esc(actionNames[e.action] || e.action)}${extra}</small></td></tr>`;
     }).join('') || '<tr><td colspan="2">لا توجد أحداث بعد</td></tr>';
@@ -334,4 +504,15 @@ async function loadAudit() {
 }
 
 window.addEventListener('hashchange', () => { if (!session) render(); });
-render();
+
+// عند فتح الصفحة نحدّث هوية المستخدم وصلاحياته من الخادم، فيرى آخر تعديل أجراه المدير دون إعادة دخول
+(async function boot() {
+  if (session) {
+    try {
+      const me = await api('/api/me');
+      session = { ...session, user: me.user, tenant: me.tenant, permissions: me.permissions };
+      sessionStorage.setItem('session', JSON.stringify(session));
+    } catch (e) { say(e.message, 'err'); } // الخطأ 401 يعالجه api() بتسجيل الخروج
+  }
+  render();
+})();
