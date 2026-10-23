@@ -4,7 +4,7 @@ import { can, fail, json, readJson } from '../../../lib/http.js';
 
 export async function onRequestGet({ env, data }) {
   if (!can(data.auth, 'platform_admin')) return fail(403, 'للمدير العام للمنصة فقط');
-  // أعداد تجميعية فقط: لا أسماء مرضى ولا أي محتوى طبي
+  // أعداد تجميعية فقط: لا أسماء مرضى  ولا أي محتوى طبي
   const { results } = await env.DB.prepare(
     `SELECT t.id, t.name, t.slug, t.status, t.created_at,
             (SELECT u.email FROM users u WHERE u.tenant_id = t.id AND u.role = 'admin' ORDER BY u.created_at LIMIT 1) AS admin_email,
