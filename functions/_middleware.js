@@ -1,4 +1,5 @@
 import { verifyToken } from '../lib/auth.js';
+import { effectivePermissions, parseOverrides } from '../lib/permissions.js';
 import { clientIp, fail } from '../lib/http.js';
 
 const PUBLIC = new Set(['/api/auth/login', '/api/setup']);
@@ -16,7 +17,7 @@ async function authenticate(request, env) {
 
   if (claims.tid) {
     const row = await env.DB.prepare(
-      `SELECT t.status AS tstatus, u.active AS uactive, u.role AS role, u.token_version AS tv
+      `SELECT t.status AS tstatus, u.active AS uactive, u.role AS role, u.token_version AS tv, u.perm_overrides AS po
        FROM users u JOIN tenants t ON t.id = u.tenant_id
        WHERE u.id = ? AND u.tenant_id = ?`
     )
@@ -24,7 +25,8 @@ async function authenticate(request, env) {
       .first();
     if (!row || row.tv !== claims.tv) return fail(401, 'انتهت الجلسة. سجّل الدخول مرة أخرى'); // تغيّرت كلمة المرور أو حُذف الحساب
     if (row.tstatus !== 'active' || !row.uactive) return fail(403, 'الحساب أو المستشفى غير فعّال');
-    return { uid: claims.sub, tid: claims.tid, role: row.role, ip };
+    // الصلاحيات تُحسب في كل طلب من الدور والتخصيصات المحفوظة، فأي تعديل يسري فورًا على الجلسات الجارية
+    return { uid: claims.sub, tid: claims.tid, role: row.role, ip, perms: effectivePermissions(row.role, parseOverrides(row.po)) };
   }
 
   // مدير المنصة يُفحص هو الآخر في القاعدة (فعّال، وما زال بدور مدير المنصة، ولم تتغير كلمة مروره)
@@ -35,7 +37,7 @@ async function authenticate(request, env) {
     .first();
   if (!row || row.tv !== claims.tv) return fail(401, 'انتهت الجلسة. سجّل الدخول مرة أخرى');
   if (!row.active) return fail(403, 'الحساب غير فعّال');
-  return { uid: claims.sub, tid: null, role: row.role, ip };
+  return { uid: claims.sub, tid: null, role: row.role, ip, perms: [] }; // مدير المنصة بلا صلاحيات مستشفيات عمدًا
 }
 
 export async function onRequest({ request, env, next, data }) {
