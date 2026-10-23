@@ -9,7 +9,7 @@ export function makeDb(schema) {
     bind: (...a) => stmt(sql, a),
     async first() { return sqlite.prepare(sql).get(...args) ?? null; },
     async all() { return { results: sqlite.prepare(sql).all(...args) }; },
-    async run() { sqlite.prepare(sql).run(...args); return { success: true }; },
+    async run() { const r = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(r.changes) } }; },
     _exec() { sqlite.prepare(sql).run(...args); },
   });
   return {
