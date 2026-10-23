@@ -1,6 +1,7 @@
 import { hashPassword, signToken, verifyPassword } from '../../../lib/auth.js';
 import { auditRaw } from '../../../lib/audit.js';
 import { clientIp, fail, json, readJson } from '../../../lib/http.js';
+import { effectivePermissions, parseOverrides } from '../../../lib/permissions.js';
 import { clearFailures, isLocked, recordFailure } from '../../../lib/throttle.js';
 
 const BAD = 'بيانات الدخول غير صحيحة';
@@ -56,6 +57,7 @@ export async function onRequestPost({ request, env }) {
   return json({
     token,
     user: { id: user.id, name: user.name, role: user.role },
+    permissions: user.tenant_id ? effectivePermissions(user.role, parseOverrides(user.perm_overrides)) : [],
     tenant: tenant ? { id: tenant.id, name: tenant.name } : null,
   });
 }
