@@ -18,13 +18,23 @@ import * as tenantStaff from '../../functions/api/platform/tenants/[id]/staff.js
 import * as tenantStaffOne from '../../functions/api/platform/tenants/[id]/staff/[uid].js';
 import * as platformAudit from '../../functions/api/platform/audit.js';
 import * as accountPw from '../../functions/api/account/password.js';
+import * as meApi from '../../functions/api/me.js';
+import * as invoices from '../../functions/api/invoices/index.js';
+import * as invoiceOne from '../../functions/api/invoices/[id].js';
+import * as invoicePay from '../../functions/api/invoices/[id]/pay.js';
+import * as visits from '../../functions/api/patients/[id]/visits.js';
+import * as staffPerms from '../../functions/api/staff/[id]/permissions.js';
+import * as platformPerms from '../../functions/api/platform/tenants/[id]/staff/[uid]/permissions.js';
 
 const env = { DB: makeDb(), JWT_SECRET: 'ui-test-secret-'.padEnd(48, 'x'), SETUP_KEY: 'ui-key' };
 const routes = [
   [/^\/api\/setup$/, setup], [/^\/api\/auth\/login$/, login], [/^\/api\/platform\/tenants$/, tenants],
   [/^\/api\/patients$/, patients], [/^\/api\/patients\/([^/]+)$/, patient],
   [/^\/api\/staff$/, staff], [/^\/api\/staff\/([^/]+)$/, staffOne],
-  [/^\/api\/appointments$/, appts], [/^\/api\/appointments\/([^/]+)$/, apptOne], [/^\/api\/audit$/, audit], [/^\/api\/platform\/tenants\/([^/]+)$/, tenantOne], [/^\/api\/platform\/tenants\/([^/]+)\/staff$/, tenantStaff], [/^\/api\/platform\/tenants\/([^/]+)\/staff\/([^/]+)$/, tenantStaffOne], [/^\/api\/platform\/audit$/, platformAudit], [/^\/api\/account\/password$/, accountPw],
+  [/^\/api\/appointments$/, appts], [/^\/api\/appointments\/([^/]+)$/, apptOne], [/^\/api\/audit$/, audit], [/^\/api\/me$/, meApi],
+  [/^\/api\/invoices$/, invoices], [/^\/api\/invoices\/([^/]+)$/, invoiceOne], [/^\/api\/invoices\/([^/]+)\/pay$/, invoicePay],
+  [/^\/api\/patients\/([^/]+)\/visits$/, visits], [/^\/api\/staff\/([^/]+)\/permissions$/, staffPerms],
+  [/^\/api\/platform\/tenants\/([^/]+)\/staff\/([^/]+)\/permissions$/, platformPerms], [/^\/api\/platform\/tenants\/([^/]+)$/, tenantOne], [/^\/api\/platform\/tenants\/([^/]+)\/staff$/, tenantStaff], [/^\/api\/platform\/tenants\/([^/]+)\/staff\/([^/]+)$/, tenantStaffOne], [/^\/api\/platform\/audit$/, platformAudit], [/^\/api\/account\/password$/, accountPw],
 ];
 
 http.createServer(async (req, res) => {
