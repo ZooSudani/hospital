@@ -11,7 +11,7 @@ export async function onRequestGet({ params, env, data }) {
   const tenant = await env.DB.prepare(`SELECT id FROM tenants WHERE id = ?`).bind(params.id).first();
   if (!tenant) return fail(404, 'المستشفى غير موجود');
   const { results } = await env.DB.prepare(
-    `SELECT u.id, u.name, u.email, u.role, u.active, u.created_at,
+    `SELECT u.id, u.name, u.email, u.role, u.active, u.created_at, CASE WHEN u.perm_overrides IS NULL THEN 0 ELSE 1 END AS custom,
             (SELECT MAX(a.created_at) FROM audit_log a WHERE a.tenant_id = u.tenant_id AND a.user_id = u.id AND a.action = 'login.ok') AS last_login
      FROM users u WHERE u.tenant_id = ? ORDER BY u.created_at`
   )
