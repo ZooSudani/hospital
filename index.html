@@ -53,7 +53,7 @@
   </section>
 
   <section id="s-patients" hidden>
-    <div id="p-form"><h2>تسجيل مريض</h2>
+    <div id="p-form"><h2 id="p-title">تسجيل مريض</h2>
     <label for="p-name">الاسم الكامل</label><input id="p-name">
     <div class="row">
       <div><label for="p-phone">الهاتف</label><input id="p-phone" inputmode="tel" dir="ltr"></div>
@@ -61,10 +61,23 @@
     </div>
     <label for="p-gender">الجنس</label>
     <select id="p-gender"><option value="">غير محدد</option><option value="male">ذكر</option><option value="female">أنثى</option></select>
-    <button id="do-patient">حفظ المريض</button></div>
+    <button id="do-patient">حفظ المريض</button> <button class="line" id="p-cancel" hidden>إلغاء التعديل</button></div>
     <h2 id="p-list-title" class="mt">المرضى</h2>
     <input id="q" placeholder="ابحث بالاسم أو الهاتف أو رقم الملف">
-    <table><thead><tr><th>الملف</th><th>الاسم</th><th>الهاتف</th></tr></thead><tbody id="patients"></tbody></table>
+    <table><thead><tr><th>الملف</th><th>الاسم</th><th>الهاتف</th><th></th></tr></thead><tbody id="patients"></tbody></table>
+  </section>
+
+  <section id="s-pfile" hidden>
+    <h2 id="pf-title">السجل الطبي</h2>
+    <div id="pf-form">
+      <label for="pf-dx">التشخيص</label><textarea id="pf-dx" rows="2"></textarea>
+      <label for="pf-notes">الملاحظات</label><textarea id="pf-notes" rows="3"></textarea>
+      <label for="pf-rx">الوصفة الطبية</label><textarea id="pf-rx" rows="2"></textarea>
+      <button id="do-visit">حفظ الزيارة</button>
+    </div>
+    <h2 class="mt">الزيارات السابقة</h2>
+    <div id="pf-list"></div>
+    <button class="line" id="pf-close">إغلاق الملف</button>
   </section>
 
   <section id="s-appts" hidden>
@@ -84,6 +97,17 @@
     <table><thead><tr><th>الوقت</th><th id="appts-th">المريض والطبيب</th><th></th></tr></thead><tbody id="appts"></tbody></table>
   </section>
 
+  <section id="s-invoices" hidden>
+    <div id="inv-form">
+      <h2>إصدار فاتورة</h2>
+      <label for="inv-patient">المريض</label><select id="inv-patient"></select>
+      <label for="inv-total">المبلغ</label><input id="inv-total" type="number" inputmode="numeric" min="1" dir="ltr">
+      <button id="do-invoice">إصدار الفاتورة</button>
+    </div>
+    <h2 id="inv-list-title" class="mt">الفواتير</h2>
+    <table><thead><tr><th>المريض</th><th>المبلغ</th><th></th></tr></thead><tbody id="invoices"></tbody></table>
+  </section>
+
   <section id="s-staff" hidden>
     <h2>إضافة موظف</h2>
     <label for="st-name">الاسم</label><input id="st-name">
@@ -94,6 +118,7 @@
     <button id="do-staff">إضافة الموظف</button>
     <h2 class="mt">الموظفون</h2>
     <table><thead><tr><th>الاسم</th><th>الدور</th><th></th></tr></thead><tbody id="staff"></tbody></table>
+    <div id="perm-panel" class="card" hidden></div>
   </section>
   <section id="s-account" hidden>
     <h2>تغيير كلمة مروري</h2>
