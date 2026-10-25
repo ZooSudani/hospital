@@ -12,7 +12,7 @@
   <button class="ghost" id="logout" hidden>خروج</button>
 </header>
 <main>
-  <p id="msg" role="status"></p>
+  <p id="msg" role="status" aria-live="polite"></p>
 
   <section id="s-login">
     <h2>تسجيل الدخول</h2>
@@ -53,7 +53,12 @@
   </section>
 
   <section id="s-patients" hidden>
-    <div id="p-form"><h2 id="p-title">تسجيل مريض</h2>
+    <h2 id="p-list-title">المرضى</h2>
+    <input id="q" placeholder="ابحث بالاسم أو الهاتف أو رقم الملف">
+    <button class="line jump" data-jump="p-form">+ تسجيل مريض جديد</button>
+    <table><thead><tr><th>الملف</th><th>الاسم</th><th>الهاتف</th><th></th></tr></thead><tbody id="patients"></tbody></table>
+    <p id="p-hint" class="note" hidden>يُعرض آخر 50 مريضًا فقط. استخدم البحث للوصول لبقية المرضى.</p>
+    <div id="p-form" class="mt"><h2 id="p-title">تسجيل مريض</h2>
     <label for="p-name">الاسم الكامل</label><input id="p-name">
     <div class="row">
       <div><label for="p-phone">الهاتف</label><input id="p-phone" inputmode="tel" dir="ltr"></div>
@@ -62,9 +67,6 @@
     <label for="p-gender">الجنس</label>
     <select id="p-gender"><option value="">غير محدد</option><option value="male">ذكر</option><option value="female">أنثى</option></select>
     <button id="do-patient">حفظ المريض</button> <button class="line" id="p-cancel" hidden>إلغاء التعديل</button></div>
-    <h2 id="p-list-title" class="mt">المرضى</h2>
-    <input id="q" placeholder="ابحث بالاسم أو الهاتف أو رقم الملف">
-    <table><thead><tr><th>الملف</th><th>الاسم</th><th>الهاتف</th><th></th></tr></thead><tbody id="patients"></tbody></table>
   </section>
 
   <section id="s-pfile" hidden>
@@ -81,9 +83,14 @@
   </section>
 
   <section id="s-appts" hidden>
-    <div id="a-form">
+    <h2 id="a-list-title">المواعيد</h2>
+    <label for="a-day">اليوم</label><input id="a-day" type="date" dir="ltr">
+    <div class="actions"><button class="mini" id="day-prev">اليوم السابق</button><button class="mini" id="day-today">اليوم</button><button class="mini" id="day-next">اليوم التالي</button></div>
+    <button class="line jump" data-jump="a-form">+ حجز موعد جديد</button>
+    <table><thead><tr><th>الوقت</th><th id="appts-th">المريض والطبيب</th><th></th></tr></thead><tbody id="appts"></tbody></table>
+    <div id="a-form" class="mt">
       <h2>حجز موعد</h2>
-      <label for="a-patient">المريض</label><select id="a-patient"></select>
+      <label for="a-patient-q">المريض</label><input id="a-patient-q" placeholder="ابحث بالاسم أو الهاتف أو رقم الملف"><select id="a-patient" aria-label="المريض"></select>
       <label for="a-doctor">الطبيب</label><select id="a-doctor"></select>
       <div class="row">
         <div><label for="a-date">التاريخ</label><input id="a-date" type="date" dir="ltr"></div>
@@ -92,33 +99,34 @@
       <label for="a-reason">سبب الزيارة (اختياري)</label><input id="a-reason">
       <button id="do-appt">حجز الموعد</button>
     </div>
-    <h2 id="a-list-title" class="mt">المواعيد</h2>
-    <label for="a-day">اليوم</label><input id="a-day" type="date" dir="ltr">
-    <table><thead><tr><th>الوقت</th><th id="appts-th">المريض والطبيب</th><th></th></tr></thead><tbody id="appts"></tbody></table>
   </section>
 
   <section id="s-invoices" hidden>
-    <div id="inv-form">
+    <h2 id="inv-list-title">الفواتير</h2>
+    <button class="line jump" data-jump="inv-form">+ إصدار فاتورة جديدة</button>
+    <table><thead><tr><th>المريض</th><th>المبلغ</th><th></th></tr></thead><tbody id="invoices"></tbody></table>
+    <div id="inv-form" class="mt">
       <h2>إصدار فاتورة</h2>
-      <label for="inv-patient">المريض</label><select id="inv-patient"></select>
+      <label for="inv-patient-q">المريض</label><input id="inv-patient-q" placeholder="ابحث بالاسم أو الهاتف أو رقم الملف"><select id="inv-patient" aria-label="المريض"></select>
       <label for="inv-total">المبلغ</label><input id="inv-total" type="number" inputmode="numeric" min="1" dir="ltr">
       <button id="do-invoice">إصدار الفاتورة</button>
     </div>
-    <h2 id="inv-list-title" class="mt">الفواتير</h2>
-    <table><thead><tr><th>المريض</th><th>المبلغ</th><th></th></tr></thead><tbody id="invoices"></tbody></table>
   </section>
 
   <section id="s-staff" hidden>
-    <h2>إضافة موظف</h2>
-    <label for="st-name">الاسم</label><input id="st-name">
-    <label for="st-email">البريد الإلكتروني</label><input id="st-email" type="email" dir="ltr">
-    <label for="st-pass">كلمة المرور (8 أحرف على الأقل)</label><input id="st-pass" type="password" autocomplete="new-password" dir="ltr">
-    <label for="st-role">الدور</label>
-    <select id="st-role"><option value="doctor">طبيب</option><option value="reception">استقبال</option><option value="accountant">محاسب</option><option value="admin">مدير مستشفى</option></select>
-    <button id="do-staff">إضافة الموظف</button>
-    <h2 class="mt">الموظفون</h2>
+    <h2>الموظفون</h2>
+    <button class="line jump" data-jump="st-form">+ إضافة موظف</button>
     <table><thead><tr><th>الاسم</th><th>الدور</th><th></th></tr></thead><tbody id="staff"></tbody></table>
     <div id="perm-panel" class="card" hidden></div>
+    <div id="st-form" class="mt">
+      <h2>إضافة موظف</h2>
+      <label for="st-name">الاسم</label><input id="st-name">
+      <label for="st-email">البريد الإلكتروني</label><input id="st-email" type="email" dir="ltr">
+      <label for="st-pass">كلمة المرور (8 أحرف على الأقل)</label><input id="st-pass" type="password" autocomplete="new-password" dir="ltr">
+      <label for="st-role">الدور</label>
+      <select id="st-role"><option value="doctor">طبيب</option><option value="reception">استقبال</option><option value="accountant">محاسب</option><option value="admin">مدير مستشفى</option></select>
+      <button id="do-staff">إضافة الموظف</button>
+    </div>
   </section>
   <section id="s-account" hidden>
     <h2>تغيير كلمة مروري</h2>
@@ -131,6 +139,18 @@
     <table><thead><tr><th>الوقت</th><th>من وماذا</th></tr></thead><tbody id="audit"></tbody></table>
   </section>
 </main>
+
+<nav id="tabs" aria-label="التنقل" hidden></nav>
+
+<div id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" hidden>
+  <div class="modal-box">
+    <h3 id="modal-title"></h3>
+    <p id="modal-text"></p>
+    <input id="modal-input" dir="auto" aria-label="القيمة">
+    <label class="perm" id="modal-show-wrap"><input type="checkbox" id="modal-show"><span>إظهار الكلمة</span></label>
+    <div class="actions"><button id="modal-ok">تأكيد</button><button class="line" id="modal-cancel">إلغاء</button></div>
+  </div>
+</div>
 
 <script src="/app.js"></script>
 </body>
