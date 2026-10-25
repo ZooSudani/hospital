@@ -1,7 +1,42 @@
 const $ = (id) => document.getElementById(id);
 let session = JSON.parse(sessionStorage.getItem('session') || 'null');
 
-function say(text, kind = '') { const m = $('msg'); m.textContent = text; m.className = kind; }
+// إشعار ثابت أعلى الشاشة (يراه المستخدم مهما نزل في الصفحة)؛ يختفي وحده، ويُغلق باللمس
+let sayTimer;
+function say(text, kind = '') {
+  const m = $('msg');
+  clearTimeout(sayTimer);
+  m.textContent = text;
+  m.className = text ? `show ${kind}` : '';
+  if (text) sayTimer = setTimeout(() => { m.className = ''; }, kind === 'err' ? 9000 : 4500);
+}
+$('msg').onclick = () => say('');
+
+// نافذة تأكيد أو إدخال داخل الصفحة (بدل prompt وconfirm التي تُظهر كلمات المرور نصًا مكشوفًا ولا تناسب الجوال)
+// ترجع: true عند التأكيد بلا حقل، أو النص المُدخل، أو null عند الإلغاء.
+function ask({ title, text = '', input = null, value = '', okText = 'تأكيد' }) {
+  return new Promise((resolve) => {
+    const field = $('modal-input'), showBox = $('modal-show');
+    $('modal-title').textContent = title; $('modal-text').textContent = text; $('modal-text').hidden = !text;
+    field.hidden = !input; $('modal-show-wrap').hidden = input !== 'password';
+    field.type = input === 'password' ? 'password' : input === 'number' ? 'number' : 'text';
+    field.value = value; showBox.checked = false; $('modal-ok').textContent = okText;
+    $('modal').hidden = false;
+    (input ? field : $('modal-ok')).focus();
+    const finish = (v) => {
+      $('modal').hidden = true;
+      $('modal-ok').removeEventListener('click', ok); $('modal-cancel').removeEventListener('click', cancel);
+      document.removeEventListener('keydown', key); showBox.removeEventListener('change', toggle);
+      resolve(v);
+    };
+    const ok = () => finish(input ? field.value : true);
+    const cancel = () => finish(null);
+    const key = (e) => { if (e.key === 'Escape') cancel(); else if (e.key === 'Enter' && input) ok(); };
+    const toggle = () => { if (input === 'password') field.type = showBox.checked ? 'text' : 'password'; };
+    $('modal-ok').addEventListener('click', ok); $('modal-cancel').addEventListener('click', cancel);
+    document.addEventListener('keydown', key); showBox.addEventListener('change', toggle);
+  });
+}
 
 async function api(path, { method = 'GET', body } = {}) {
   const res = await fetch(path, {
@@ -37,16 +72,13 @@ function render() {
   $('s-patients').hidden = !(tenant && has('patients.read'));
   $('p-form').hidden = !(tenant && (has('patients.create') || has('patients.update')));
   $('p-title').textContent = editingPatient ? 'تعديل بيانات المريض' : (has('patients.create') ? 'تسجيل مريض' : 'تعديل بيانات مريض (اختر «تعديل» من القائمة)');
-  $('p-list-title').classList.toggle('mt', !$('p-form').hidden);
   if (!(tenant && has('visits.read'))) currentFile = null;
   $('s-pfile').hidden = !currentFile;
   $('pf-form').hidden = !has('visits.write');
   $('s-appts').hidden = !(tenant && has('appointments.read'));
   $('a-form').hidden = !(tenant && has('appointments.book'));
-  $('a-list-title').classList.toggle('mt', !$('a-form').hidden);
   $('s-invoices').hidden = !(tenant && has('invoices.read'));
   $('inv-form').hidden = !(tenant && has('invoices.create'));
-  $('inv-list-title').classList.toggle('mt', !$('inv-form').hidden);
   $('s-staff').hidden = !(tenant && has('staff.manage'));
   $('s-audit').hidden = !(tenant && has('audit.view'));
   $('s-account').hidden = !on;
@@ -61,9 +93,42 @@ function render() {
   if (!$('s-appts').hidden) { initApptDates(); loadAppts(); }
   if (!$('a-form').hidden || !$('inv-form').hidden) loadPatientOptions();
   if (!$('s-invoices').hidden) loadInvoices();
+  document.querySelectorAll('[data-jump]').forEach((b) => { b.hidden = $(b.dataset.jump).hidden; }); // زر «+ جديد» لمن يملك صلاحية النموذج فقط
+  buildTabs();
 }
 
-function logout() { session = null; currentFile = null; editingPatient = null; sessionStorage.removeItem('session'); render(); }
+// ===== التبويبات: قسم واحد في كل مرة، والتبويبات المتاحة تتبع الصلاحيات =====
+const SECTION_TAB = { 's-platform': 'hospitals', 's-paudit': 'activity', 's-appts': 'appts', 's-patients': 'patients', 's-pfile': 'patients', 's-invoices': 'invoices', 's-staff': 'team', 's-audit': 'team', 's-account': 'account' };
+const TAB_LABELS = { hospitals: 'المستشفيات', activity: 'النشاط', appts: 'المواعيد', patients: 'المرضى', invoices: 'الفواتير', team: 'الفريق', account: 'حسابي' };
+const TAB_ORDER = ['hospitals', 'appts', 'patients', 'invoices', 'team', 'activity', 'account']; // ترتيب العرض
+const DEFAULT_TAB = ['hospitals', 'appts', 'invoices', 'patients', 'team', 'activity', 'account']; // أولوية التبويب الافتتاحي: المواعيد، وللمحاسب الفواتير
+let currentTab = null;
+let permHidden = {}; // الأقسام المخفية بسبب الصلاحيات (قبل اختيار التبويب)
+
+function buildTabs() {
+  permHidden = Object.fromEntries(Object.keys(SECTION_TAB).map((id) => [id, $(id).hidden]));
+  const open = TAB_ORDER.filter((t) => Object.entries(SECTION_TAB).some(([id, tab]) => tab === t && id !== 's-pfile' && !permHidden[id]));
+  if (!session || !open.length) { currentTab = null; $('tabs').innerHTML = ''; $('tabs').hidden = true; document.body.classList.remove('has-tabs'); return; }
+  if (!open.includes(currentTab)) currentTab = DEFAULT_TAB.find((t) => open.includes(t));
+  $('tabs').innerHTML = open.map((t) => `<button data-tab="${t}">${TAB_LABELS[t]}</button>`).join('');
+  $('tabs').hidden = false; document.body.classList.add('has-tabs');
+  applyTab();
+}
+
+function applyTab() {
+  for (const [id, tab] of Object.entries(SECTION_TAB)) {
+    const byPerm = id === 's-pfile' ? !(currentFile && has('visits.read')) : permHidden[id];
+    $(id).hidden = byPerm || tab !== currentTab;
+  }
+  $('tabs').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.tab === currentTab));
+}
+
+$('tabs').onclick = (ev) => {
+  const b = ev.target.closest('button'); if (!b) return;
+  currentTab = b.dataset.tab; applyTab(); window.scrollTo(0, 0);
+};
+
+function logout() { session = null; currentFile = null; editingPatient = null; currentTab = null; sessionStorage.removeItem('session'); render(); }
 
 $('logout').onclick = logout;
 $('toggle-setup').onclick = () => { $('s-setup').hidden = !$('s-setup').hidden; };
@@ -72,7 +137,7 @@ $('do-login').onclick = async () => {
   try {
     session = await api('/api/auth/login', { method: 'POST', body: { slug: $('slug').value, email: $('email').value, password: $('password').value } });
     sessionStorage.setItem('session', JSON.stringify(session));
-    $('password').value = ''; say('تم تسجيل الدخول', 'ok'); render();
+    $('password').value = ''; say(''); render();
   } catch (e) { say(e.message, 'err'); }
 };
 
@@ -187,11 +252,11 @@ $('tenants').onclick = async (ev) => {
     if (act === 'close') { openTenant = null; $('d-' + id).hidden = true; return; }
     if (act === 'toggle') {
       const next = b.dataset.status === 'active' ? 'suspended' : 'active';
-      if (next === 'suspended' && !confirm('سيُمنع كل موظفي هذا المستشفى من الدخول فورًا. متابعة؟')) return;
+      if (next === 'suspended' && !(await ask({ title: 'إيقاف المستشفى', text: 'سيُمنع كل موظفي هذا المستشفى من الدخول فورًا. متابعة؟', okText: 'إيقاف' }))) return;
       await patch('/api/platform/tenants/' + id, { status: next });
       say(next === 'active' ? 'تم تفعيل المستشفى' : 'تم إيقاف المستشفى', 'ok');
     } else if (act === 'rename') {
-      const name = prompt('الاسم الجديد للمستشفى', b.dataset.name);
+      const name = await ask({ title: 'اسم المستشفى', input: 'text', value: b.dataset.name, okText: 'حفظ' });
       if (!name) return;
       await patch('/api/platform/tenants/' + id, { name });
       say('تمت التسمية', 'ok');
@@ -200,7 +265,7 @@ $('tenants').onclick = async (ev) => {
       say('تم فك قفل الدخول عن كل موظفي المستشفى', 'ok');
       return;
     } else if (act === 'pass') {
-      const pw = prompt('كلمة المرور الجديدة لمدير المستشفى (8 أحرف على الأقل)');
+      const pw = await ask({ title: 'كلمة مرور جديدة لمدير المستشفى', text: '8 أحرف على الأقل، ولا تحتوي بريده أو اسمه', input: 'password', okText: 'حفظ' });
       if (!pw) return;
       const r = await patch('/api/platform/tenants/' + id, { admin_password: pw });
       say('تم تعيين كلمة مرور جديدة للمدير: ' + r.admin_email, 'ok');
@@ -208,7 +273,7 @@ $('tenants').onclick = async (ev) => {
       await patch(`/api/platform/tenants/${id}/staff/${uid}`, { active: b.dataset.active !== '1' });
       say('تم تحديث حالة الموظف', 'ok');
     } else if (act === 's-pass') {
-      const pw = prompt('كلمة المرور الجديدة للموظف (8 أحرف على الأقل)');
+      const pw = await ask({ title: 'كلمة مرور جديدة للموظف', text: '8 أحرف على الأقل، ولا تحتوي بريده أو اسمه', input: 'password', okText: 'حفظ' });
       if (!pw) return;
       await patch(`/api/platform/tenants/${id}/staff/${uid}`, { password: pw });
       say('تم تغيير كلمة مرور الموظف', 'ok');
@@ -260,6 +325,7 @@ async function loadPatients() {
   try {
     const { patients } = await api('/api/patients?q=' + encodeURIComponent($('q').value));
     patientCache = Object.fromEntries(patients.map((p) => [p.id, p]));
+    $('p-hint').hidden = patients.length < 50 || !!$('q').value;
     $('patients').innerHTML = patients.map((p) => {
       const acts = (has('visits.read') ? `<button class="mini" data-act="file" data-id="${esc(p.id)}">السجل الطبي</button>` : '') + (has('patients.update') ? `<button class="mini" data-act="edit" data-id="${esc(p.id)}">تعديل</button>` : '');
       return `<tr><td dir="ltr">${esc(p.file_no)}</td><td>${esc(p.full_name)}</td><td dir="ltr">${esc(p.phone || '')}</td><td>${acts}</td></tr>`;
@@ -283,7 +349,7 @@ $('do-patient').onclick = async () => {
     } else {
       if (!has('patients.create')) { say('لا تملك صلاحية تسجيل مرضى جدد', 'err'); return; }
       const r = await api('/api/patients', { method: 'POST', body });
-      say('تم حفظ المريض، رقم الملف ' + r.file_no, 'ok');
+      say('تم حفظ المريض، رقم الملف ' + r.file_no, 'ok'); toList('p-list-title');
     }
     resetPatientForm(); loadPatients(); if (!$('a-form').hidden || !$('inv-form').hidden) loadPatientOptions();
   } catch (e) { say(e.message, 'err'); }
@@ -325,7 +391,7 @@ async function loadInvoices() {
 $('do-invoice').onclick = async () => {
   try {
     await api('/api/invoices', { method: 'POST', body: { patient_id: $('inv-patient').value, total: Number($('inv-total').value) } });
-    $('inv-total').value = ''; say('تم إصدار الفاتورة', 'ok'); loadInvoices();
+    $('inv-total').value = ''; say('تم إصدار الفاتورة', 'ok'); loadInvoices(); toList('inv-list-title');
   } catch (e) { say(e.message, 'err'); }
 };
 
@@ -333,12 +399,12 @@ $('invoices').onclick = async (ev) => {
   const b = ev.target.closest('button'); if (!b) return;
   try {
     if (b.dataset.act === 'collect') {
-      const v = prompt(`المبلغ المحصَّل (المتبقي ${b.dataset.left})`, b.dataset.left);
+      const v = await ask({ title: 'تحصيل دفعة', text: `المتبقي على الفاتورة: ${b.dataset.left}`, input: 'number', value: b.dataset.left, okText: 'تسجيل الدفعة' });
       if (!v) return;
       await api(`/api/invoices/${b.dataset.id}/pay`, { method: 'POST', body: { amount: Number(v) } });
       say('تم تسجيل الدفعة', 'ok');
     } else if (b.dataset.act === 'void') {
-      if (!confirm('إلغاء هذه الفاتورة؟')) return;
+      if (!(await ask({ title: 'إلغاء الفاتورة', text: 'لا يمكن التراجع عن إلغاء الفاتورة.', okText: 'إلغاء الفاتورة' }))) return;
       await api('/api/invoices/' + b.dataset.id, { method: 'PATCH', body: { status: 'void' } });
       say('تم إلغاء الفاتورة', 'ok');
     }
@@ -356,12 +422,12 @@ async function openFile(id) {
       ${v.diagnosis ? `<div><b>التشخيص</b><div class="pre">${esc(v.diagnosis)}</div></div>` : ''}
       ${v.notes ? `<div><b>الملاحظات</b><div class="pre">${esc(v.notes)}</div></div>` : ''}
       ${v.prescription ? `<div><b>الوصفة</b><div class="pre">${esc(v.prescription)}</div></div>` : ''}</div>`).join('') || '<p>لا توجد زيارات مسجلة بعد</p>';
-    $('s-pfile').hidden = false; $('pf-form').hidden = !has('visits.write');
-    $('s-pfile').scrollIntoView();
+    $('pf-form').hidden = !has('visits.write');
+    applyTab(); $('s-pfile').scrollIntoView();
   } catch (e) { say(e.message, 'err'); }
 }
 
-$('pf-close').onclick = () => { currentFile = null; $('s-pfile').hidden = true; };
+$('pf-close').onclick = () => { currentFile = null; applyTab(); };
 
 $('do-visit').onclick = async () => {
   try {
@@ -402,7 +468,7 @@ $('staff').onclick = async (ev) => {
       await api('/api/staff/' + b.dataset.id, { method: 'PATCH', body: { active: b.dataset.active !== '1' } });
       say('تم تحديث الحالة', 'ok');
     } else if (b.dataset.act === 'pass') {
-      const pw = prompt('كلمة المرور الجديدة (8 أحرف على الأقل)');
+      const pw = await ask({ title: 'كلمة مرور جديدة للموظف', text: '8 أحرف على الأقل، ولا تحتوي بريده أو اسمه', input: 'password', okText: 'حفظ' });
       if (!pw) return;
       await api('/api/staff/' + b.dataset.id, { method: 'PATCH', body: { password: pw } });
       say('تم تغيير كلمة المرور', 'ok');
@@ -427,12 +493,30 @@ function initApptDates() {
   }
 }
 
+const patientOption = (p) => `<option value="${esc(p.id)}">${esc(p.full_name)} (ملف ${esc(p.file_no)})</option>`;
+
+// بحث المريض أثناء الكتابة في نماذج الحجز والفواتير، فلا يقف الاختيار عند آخر 50 مريضًا
+function bindPatientSearch(inputId, selectId) {
+  let t;
+  $(inputId).oninput = () => {
+    clearTimeout(t);
+    t = setTimeout(async () => {
+      try {
+        const { patients } = await api('/api/patients?q=' + encodeURIComponent($(inputId).value.trim()));
+        $(selectId).innerHTML = patients.length ? patients.map(patientOption).join('') : '<option value="">لا توجد نتائج</option>';
+      } catch (e) { say(e.message, 'err'); }
+    }, 300);
+  };
+}
+bindPatientSearch('a-patient-q', 'a-patient');
+bindPatientSearch('inv-patient-q', 'inv-patient');
+
 // خيارات المرضى والأطباء في نماذج الحجز والفواتير (تُحمَّل مرة واحدة لكل تحديث)
 async function loadPatientOptions() {
   try {
     const wantAppt = !$('a-form').hidden, wantInv = !$('inv-form').hidden;
     const { patients } = await api('/api/patients');
-    const opts = patients.length ? patients.map((p) => `<option value="${esc(p.id)}">${esc(p.full_name)} (ملف ${esc(p.file_no)})</option>`).join('') : '<option value="">لا يوجد مرضى بعد</option>';
+    const opts = patients.length ? patients.map(patientOption).join('') : '<option value="">لا يوجد مرضى بعد</option>';
     const fill = (id) => { const keep = $(id).value; $(id).innerHTML = opts; if (keep) $(id).value = keep; };
     if (wantInv) fill('inv-patient');
     if (wantAppt) {
@@ -463,10 +547,20 @@ async function loadAppts() {
 
 $('a-day').onchange = loadAppts;
 
+function shiftDay(n) {
+  const d = new Date($('a-day').value + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  $('a-day').value = d.toISOString().slice(0, 10);
+  loadAppts();
+}
+$('day-prev').onclick = () => shiftDay(-1);
+$('day-next').onclick = () => shiftDay(1);
+$('day-today').onclick = () => { $('a-day').value = todayKhartoum(); loadAppts(); };
+
 $('do-appt').onclick = async () => {
   try {
     await api('/api/appointments', { method: 'POST', body: { patient_id: $('a-patient').value, doctor_id: $('a-doctor').value, starts_at: $('a-date').value + ' ' + $('a-time').value, reason: $('a-reason').value } });
-    say('تم حجز الموعد', 'ok'); $('a-reason').value = ''; $('a-day').value = $('a-date').value; loadAppts();
+    say('تم حجز الموعد', 'ok'); $('a-reason').value = ''; $('a-day').value = $('a-date').value; loadAppts(); toList('a-list-title');
   } catch (e) { say(e.message, 'err'); }
 };
 
@@ -502,6 +596,23 @@ async function loadAudit() {
     }).join('') || '<tr><td colspan="2">لا توجد أحداث بعد</td></tr>';
   } catch (e) { say(e.message, 'err'); }
 }
+
+document.querySelectorAll('[data-jump]').forEach((b) => { b.onclick = () => { const t = $(b.dataset.jump); t.scrollIntoView({ behavior: 'smooth', block: 'start' }); const f = t.querySelector('input'); if (f) setTimeout(() => f.focus({ preventScroll: true }), 400); }; });
+const toList = (id) => $(id).scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+// زر Enter في حقول الدخول يسجّل الدخول
+['slug', 'email', 'password'].forEach((id) => $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') $('do-login').click(); }));
+
+// منع الضغط المزدوج: الزر يتعطل أثناء تنفيذ طلبه، فلا يتكرر مريض أو فاتورة أو حجز بضغطتين متتاليتين
+['do-login', 'do-setup', 'do-tenant', 'do-patient', 'do-visit', 'do-appt', 'do-invoice', 'do-staff', 'do-pass'].forEach((id) => {
+  const handler = $(id).onclick;
+  $(id).onclick = async (ev) => {
+    const btn = ev.currentTarget;
+    if (btn.disabled) return;
+    btn.disabled = true;
+    try { await handler(ev); } finally { btn.disabled = false; }
+  };
+});
 
 window.addEventListener('hashchange', () => { if (!session) render(); });
 
