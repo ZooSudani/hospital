@@ -27,8 +27,33 @@ def check(name, cond):
 
 SECTIONS = {"patients": "#s-patients", "p-form": "#p-form", "appts": "#s-appts", "a-form": "#a-form", "staff": "#s-staff", "audit": "#s-audit", "platform": "#s-platform", "paudit": "#s-paudit", "account": "#s-account", "invoices": "#s-invoices", "inv-form": "#inv-form", "pfile": "#s-pfile"}
 
+def tabs(page):
+    return page.eval_on_selector_all("#tabs button", "els => els.map(e => e.dataset.tab)")
+
+def go(page, key):
+    page.click(f"#tabs button[data-tab={key}]")
+
+def active_tab(page):
+    return page.eval_on_selector("#tabs button.active", "e => e.dataset.tab")
+
+def modal(page, value=None, ok=True):
+    page.locator("#modal").wait_for(state="visible")
+    if value is not None:
+        page.fill("#modal-input", value)
+    page.click("#modal-ok" if ok else "#modal-cancel")
+    page.locator("#modal").wait_for(state="hidden")
+
 def visible(page):
-    return {k for k, sel in SECTIONS.items() if page.is_visible(sel)}
+    # الأقسام الظاهرة عبر كل التبويبات المتاحة (قسم واحد يُعرض في كل مرة)، ثم نعود للتبويب الذي كنا فيه
+    keys = tabs(page)
+    if not keys:
+        return {k for k, sel in SECTIONS.items() if page.is_visible(sel)}
+    start = active_tab(page); found = set()
+    for key in keys:
+        go(page, key)
+        found |= {k for k, sel in SECTIONS.items() if page.is_visible(sel)}
+    go(page, start)
+    return found
 
 def login(page, slug, email, password):
     page.goto(BASE); page.fill("#slug", slug); page.fill("#email", email); page.fill("#password", password)
@@ -61,6 +86,7 @@ with sync_playwright() as p:
     # مدير المنصة: المستشفيات فقط
     login(page, "platform", "root@x.com", "Zebra-5521-kx")
     check("مدير المنصة يرى المستشفيات فقط", visible(page) == {"platform", "paudit", "account"})
+    check("تبويبات مدير المنصة والافتراضي «المستشفيات»", tabs(page) == ["hospitals", "activity", "account"] and active_tab(page) == "hospitals")
     body = page.inner_text("body")
     check("مدير المنصة لا يرى كلمة مرضى أو مواعيد", "المرضى" not in body and "المواعيد" not in body)
     page.locator("#tenants", has_text="admin@alafia.com").wait_for()
@@ -69,12 +95,19 @@ with sync_playwright() as p:
     check("لوحة المنصة: أزرار الإدارة الخمسة", all(page.locator(f"#tenants button[data-act={a}]").count() == 1 for a in ["manage", "toggle", "rename", "unlock", "pass"]))
     check("لوحة المنصة: لا أسماء مرضى (تجميع فقط)", "محمد" not in txt and "سارة" not in txt)
     page.screenshot(path="/tmp/ui-platform.png", full_page=True)
-    page.once("dialog", lambda d: d.accept("Platform-reset-pass-9"))
     page.click("#tenants button[data-act=pass]")
+    page.locator("#modal").wait_for(state="visible")
+    check("نافذة كلمة المرور: الحقل مخفي افتراضيًا", page.get_attribute("#modal-input", "type") == "password")
+    page.check("#modal-show")
+    check("نافذة كلمة المرور: خيار إظهار الكلمة", page.get_attribute("#modal-input", "type") == "text")
+    modal(page, "Platform-reset-pass-9")
     page.locator("#msg", has_text="admin@alafia.com").wait_for()
     check("إعادة تعيين كلمة مرور المدير من لوحة المنصة", "تم تعيين" in page.inner_text("#msg"))
-    page.once("dialog", lambda d: d.accept())
     page.click("#tenants button[data-act=toggle]")
+    page.keyboard.press("Escape"); page.locator("#modal").wait_for(state="hidden")
+    check("نافذة التأكيد: Escape يلغي ولا ينفّذ الإيقاف", "موقوف" not in page.inner_text("#tenants"))
+    page.click("#tenants button[data-act=toggle]")
+    modal(page)
     page.locator("#tenants", has_text="موقوف").wait_for()
     check("إيقاف المستشفى من لوحة المنصة", "موقوف" in page.inner_text("#tenants"))
     page.click("#tenants button[data-act=toggle]")
@@ -92,8 +125,8 @@ with sync_playwright() as p:
     page.locator("#tenants .perm-box input[data-perm='staff.manage']").wait_for()
     check("مدير المنصة: يمنح الصلاحيات الحساسة (خانتها غير معطّلة)", not page.locator("#tenants .perm-box input[data-perm='staff.manage']").is_disabled())
     page.screenshot(path="/tmp/ui-platform-manage.png", full_page=True)
-    page.once("dialog", lambda d: d.accept("Violet-new-7788"))
     page.locator("#tenants .detail tr", has_text="lina@alafia.com").locator("button[data-act=s-pass]").click()
+    modal(page, "Violet-new-7788")
     page.locator("#msg", has_text="تم تغيير كلمة مرور الموظف").wait_for()
     page.locator("#tenants .detail tr", has_text="lina@alafia.com").locator("button[data-act=s-toggle]").click()
     page.locator("#tenants .detail tr.off", has_text="lina@alafia.com").wait_for()
@@ -101,23 +134,42 @@ with sync_playwright() as p:
     page.click("#tenants button[data-act=unlock]")
     page.locator("#msg", has_text="فك قفل الدخول").wait_for()
     check("فك قفل المستشفى", True)
+    go(page, "activity")
     page.locator("#paudit", has_text="إنشاء مستشفى").wait_for()
     check("نشاط المنصة يعرض الأحداث باسم المستشفى", "مستشفى العافية" in page.inner_text("#paudit"))
 
     # مدير المستشفى: كل أقسام مستشفاه
     page.click("#logout"); login(page, "alafia", "admin@alafia.com", "Platform-reset-pass-9")
+    check("تبويبات المدير والافتراضي «المواعيد»", tabs(page) == ["appts", "patients", "invoices", "team", "account"] and active_tab(page) == "appts")
     check("المدير يرى المرضى والنموذج والمواعيد والحجز والموظفين والسجل", visible(page) == {"patients", "p-form", "appts", "a-form", "staff", "audit", "invoices", "account"})
+    go(page, "team")
     page.locator("#audit", has_text="دخول").wait_for()
     check("سجل النشاط يعرض أحداثًا بأسماء عربية", "دخول" in page.inner_text("#audit"))
     page.screenshot(path="/tmp/ui-admin.png", full_page=True)
 
     # الاستقبال: بلا موظفين
     page.click("#logout"); login(page, "alafia", "rec@alafia.com", "recept1234")
+    check("تبويبات الاستقبال والافتراضي «المواعيد»", tabs(page) == ["appts", "patients", "account"] and active_tab(page) == "appts")
+    first_row_top = page.evaluate("() => Math.round(document.getElementById('appts').getBoundingClientRect().top)")
+    form_top = page.evaluate("() => Math.round(document.getElementById('a-form').getBoundingClientRect().top)")
+    check("جدول المواعيد يسبق نموذج الحجز", first_row_top < form_top)
+    page.click("#s-appts [data-jump=a-form]"); page.wait_for_timeout(900)
+    jumped = page.evaluate("() => Math.round(document.getElementById('a-form').getBoundingClientRect().top)")
+    check("زر «+ حجز موعد جديد» يقفز إلى النموذج", 0 <= jumped < 300)
+    page.evaluate("() => window.scrollTo(0, 0)")
     check("الاستقبال: مرضى ونموذج ومواعيد وحجز بلا موظفين", visible(page) == {"patients", "p-form", "appts", "a-form", "account"})
     page.wait_for_selector("#a-patient option:nth-child(2)", state="attached")
     page.select_option("#a-doctor", doc_id); page.select_option("#a-time", "10:00"); page.fill("#a-reason", "كشف")
     page.click("#do-appt"); page.locator("#appts", has_text="10:00").wait_for()
     check("الاستقبال يرى اسم الطبيب في صف الموعد", "د. منتصر" in page.inner_text("#appts"))
+    page.fill("#a-patient-q", "آدم"); page.wait_for_timeout(900)
+    opts = page.locator("#a-patient option").all_inner_texts()
+    check("بحث المريض أثناء الكتابة في نموذج الحجز", len(opts) == 1 and "محمد آدم" in opts[0])
+    d0 = page.input_value("#a-day"); page.click("#day-next"); d1 = page.input_value("#a-day")
+    page.click("#day-prev"); page.click("#day-prev"); d2 = page.input_value("#a-day"); page.click("#day-today"); d3 = page.input_value("#a-day")
+    page.locator("#appts", has_text="10:00").wait_for()
+    check("التنقل بين الأيام (التالي والسابق والعودة لليوم)", d1 != d0 and d2 != d0 and d1 != d2 and d3 == d0)
+    go(page, "patients")
     check("اسم مريض خبيث يُعرض نصًا لا وسومًا (XSS)", page.locator("#patients img, #patients b").count() == 0 and page.evaluate("() => window.__xss") is None and "onerror" in page.inner_text("#patients"))
     check("الاستقبال: أزرار التعديل بلا زر السجل الطبي", page.locator("#patients button[data-act=edit]").count() >= 1 and page.locator("#patients button[data-act=file]").count() == 0)
     page.locator("#patients tr", has_text="سارة عثمان").locator("button[data-act=edit]").click()
@@ -125,17 +177,28 @@ with sync_playwright() as p:
     page.fill("#p-phone", "0955555555"); page.click("#do-patient")
     page.locator("#patients", has_text="0955555555").wait_for()
     check("الاستقبال: تعديل بيانات مريض", page.input_value("#p-name") == "")
+    check("الإشعار ثابت الموضع أعلى الشاشة", page.evaluate("() => getComputedStyle(document.getElementById('msg')).position") == "fixed")
+    page.evaluate("() => { window.scrollTo(0, document.body.scrollHeight); document.getElementById('do-patient').click(); }")
+    page.locator("#msg.err").wait_for()
+    top = page.evaluate("() => Math.round(document.getElementById('msg').getBoundingClientRect().top)")
+    check("إشعار الخطأ يظهر داخل الشاشة حتى لو نزل المستخدم إلى أسفل الصفحة", 0 <= top <= 80 and "الاسم" in page.inner_text("#msg"))
+    page.click("#msg"); page.locator("#msg.show").wait_for(state="detached")
+    check("اللمس على الإشعار يغلقه", not page.is_visible("#msg"))
+    go(page, "appts")
     check("الاستقبال يرى زر الإلغاء", page.locator("#appts button[data-st=cancelled]").count() == 1)
     page.screenshot(path="/tmp/ui-reception.png", full_page=True)
 
     # الطبيب: قوائم قراءة فقط، ومواعيده هو
     page.click("#logout"); login(page, "alafia", "doc@alafia.com", "doctor1234")
+    check("تبويبات الطبيب والافتراضي «المواعيد» (جدوله أولًا)", tabs(page) == ["appts", "patients", "account"] and active_tab(page) == "appts")
+    check("الطبيب: لا يظهر له زر «+ حجز موعد جديد»", not page.is_visible("[data-jump=a-form]"))
     check("الطبيب: قائمة المرضى والمواعيد فقط", visible(page) == {"patients", "appts", "account"})
     check("الطبيب: لا نموذج تسجيل مريض ولا حجز ولا موظفين", not any(page.is_visible(SECTIONS[k]) for k in ["p-form", "a-form", "staff"]))
     check("الطبيب: لا زر إلغاء", page.locator("#appts button[data-st=cancelled]").count() == 0)
     check("الطبيب: رأس الجدول المريض فقط", page.inner_text("#appts-th").strip() == "المريض")
     check("الطبيب: لا يرى اسمه في كل صف", "د. منتصر" not in page.inner_text("#appts"))
     check("الطبيب: يرى سبب الزيارة", "كشف" in page.inner_text("#appts"))
+    go(page, "patients")
     check("الطبيب: لا زر تعديل المرضى", page.locator("#patients button[data-act=edit]").count() == 0)
     page.locator("#patients tr", has_text="محمد آدم").locator("button[data-act=file]").click()
     page.locator("#s-pfile").wait_for(state="visible")
@@ -147,6 +210,7 @@ with sync_playwright() as p:
 
     # المحاسب: قائمة المرضى فقط
     page.click("#logout"); login(page, "alafia", "acc@alafia.com", "account1234")
+    check("تبويبات المحاسب والافتراضي «الفواتير»", tabs(page) == ["patients", "invoices", "account"] and active_tab(page) == "invoices")
     check("المحاسب: قائمة المرضى فقط", visible(page) == {"patients", "invoices", "inv-form", "account"})
     body = page.inner_text("body")
     check("المحاسب: لا يرى كلمات الحجز أو الموظفين", all(w not in body for w in ["حجز موعد", "إضافة موظف", "تسجيل مريض"]))
@@ -154,27 +218,32 @@ with sync_playwright() as p:
     page.wait_for_selector("#inv-patient option", state="attached")
     page.fill("#inv-total", "5000"); page.click("#do-invoice")
     page.locator("#invoices", has_text="0 / 5000").wait_for()
-    page.once("dialog", lambda d: d.accept("2000"))
     page.locator("#invoices button[data-act=collect]").first.click()
+    modal(page, "2000")
     page.locator("#invoices", has_text="2000 / 5000").wait_for()
     check("المحاسب: تحصيل دفعة جزئية", True)
     check("المحاسب: لا زر إلغاء لفاتورة عليها دفعة", page.locator("#invoices button[data-act=void]").count() == 0)
     page.fill("#inv-total", "100"); page.click("#do-invoice")
     page.locator("#invoices button[data-act=void]").first.wait_for()
-    page.once("dialog", lambda d: d.accept())
     page.locator("#invoices button[data-act=void]").first.click()
+    modal(page)
     page.locator("#invoices", has_text="ملغاة").wait_for()
     check("المحاسب: إلغاء فاتورة بلا دفعات", "ملغاة" in page.inner_text("#invoices"))
+    page.fill("#inv-total", "777"); page.dblclick("#do-invoice")
+    page.locator("#invoices", has_text="0 / 777").wait_for(); page.wait_for_timeout(700)
+    check("الضغط المزدوج على «إصدار الفاتورة» ينشئ فاتورة واحدة", page.locator("#invoices tr", has_text="0 / 777").count() == 1)
     page.screenshot(path="/tmp/ui-accountant.png", full_page=True)
+    go(page, "account")
     page.fill("#acc-current", "account1234"); page.fill("#acc-new", "Account-new-9915"); page.click("#do-pass")
     page.locator("#msg", has_text="تم تغيير كلمة المرور").wait_for()
-    check("المحاسب غيّر كلمة مروره وبقي داخل الجلسة", page.is_visible("#s-patients") and page.input_value("#acc-new") == "")
+    check("المحاسب غيّر كلمة مروره وبقي داخل الجلسة", page.is_visible("#tabs") and page.input_value("#acc-new") == "")
     page.click("#logout"); login(page, "alafia", "acc@alafia.com", "Account-new-9915")
-    check("الدخول بكلمة المرور الجديدة", page.is_visible("#s-patients"))
+    check("الدخول بكلمة المرور الجديدة", page.is_visible("#s-invoices"))
 
     # المدير يخصّص صلاحيات شخص، فيظهر الأثر عند ذلك الشخص
     page.click("#logout"); login(page, "alafia", "admin@alafia.com", "Platform-reset-pass-9")
     check("المدير: لا نموذج فواتير ولا زر سجل طبي (فصل المهام)", not page.is_visible("#inv-form") and page.locator("#patients button[data-act=file]").count() == 0)
+    go(page, "team")
     page.locator("#staff tr", has_text="rec@alafia.com").locator("button[data-act=perms]").click()
     page.locator("#perm-panel input[data-perm='visits.read']").wait_for()
     check("محرّر الصلاحيات: الحساسة معطّلة لمدير المستشفى", page.locator("#perm-panel input[data-perm='staff.manage']").is_disabled() and page.locator("#perm-panel input[data-perm='audit.view']").is_disabled())
@@ -186,6 +255,7 @@ with sync_playwright() as p:
     check("بعد الحفظ تظهر علامة «مخصص» على الموظف", True)
     page.click("#logout"); login(page, "alafia", "rec@alafia.com", "recept1234")
     check("الاستقبال بعد المنح: يرى زر السجل الطبي", page.locator("#patients button[data-act=file]").count() >= 1)
+    go(page, "patients")
     page.locator("#patients tr", has_text="محمد آدم").locator("button[data-act=file]").first.click()
     page.locator("#s-pfile").wait_for(state="visible")
     check("الاستقبال بعد المنح: يقرأ ولا يكتب", "التهاب حلق" in page.inner_text("#pf-list") and not page.is_visible("#pf-form"))
@@ -193,13 +263,20 @@ with sync_playwright() as p:
     # خروج: لا بقايا بيانات على الشاشة
     page.click("#logout")
     check("بعد الخروج: لا أقسام ظاهرة", visible(page) == set())
+    check("بعد الخروج: شريط التنقل مخفي", not page.is_visible("#tabs"))
+    page.fill("#slug", "alafia"); page.fill("#email", "rec@alafia.com"); page.fill("#password", "recept1234"); page.press("#password", "Enter")
+    page.wait_for_selector("#logout:not([hidden])")
+    check("زر Enter يسجّل الدخول", page.is_visible("#tabs"))
+    page.click("#logout")
 
     # ملف ناقص في النشر: الخادم يردّ بصفحة HTML بدل JSON، فيجب أن تظهر رسالة واضحة لا خطأ برمجي
     page.route("**/api/audit", lambda route: route.fulfill(status=200, content_type="text/html", body="<html>fallback</html>"))
     login(page, "alafia", "admin@alafia.com", "Platform-reset-pass-9")
     page.locator("#msg", has_text="ملف ناقص").wait_for()
     check("ملف ناقص في النشر: رسالة واضحة بدل events.map", "events.map" not in page.inner_text("#msg") and "/api/audit" in page.inner_text("#msg"))
-    check("باقي الصفحة تعمل رغم النقص", page.is_visible("#s-patients") and page.is_visible("#s-staff"))
+    go(page, "patients"); ok1 = page.is_visible("#s-patients")
+    go(page, "team"); ok2 = page.is_visible("#s-staff")
+    check("باقي الصفحة تعمل رغم النقص", ok1 and ok2)
     page.unroute("**/api/audit")
     check("لا أخطاء جافاسكربت في الصفحة", not errors)
     check("لا انتهاكات CSP غير المقصودة (ما عدا حقن الاختبار)", len([m for m in csp_msgs if "inline script" not in m.lower()]) == 0)
