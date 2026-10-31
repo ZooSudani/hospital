@@ -25,7 +25,7 @@ results = []
 def check(name, cond):
     results.append((name, bool(cond))); print(("✔ " if cond else "✘ ") + name)
 
-SECTIONS = {"patients": "#s-patients", "p-form": "#p-form", "appts": "#s-appts", "a-form": "#a-form", "staff": "#s-staff", "audit": "#s-audit", "platform": "#s-platform", "paudit": "#s-paudit", "account": "#s-account", "invoices": "#s-invoices", "inv-form": "#inv-form", "pfile": "#s-pfile"}
+SECTIONS = {"patients": "#s-patients", "p-form": "#p-form", "appts": "#s-appts", "a-form": "#a-form", "staff": "#s-staff", "audit": "#s-audit", "platform": "#s-platform", "paudit": "#s-paudit", "account": "#s-account", "invoices": "#s-invoices", "inv-form": "#inv-form", "pfile": "#s-pfile", "reports": "#s-reports"}
 
 def tabs(page):
     return page.eval_on_selector_all("#tabs button", "els => els.map(e => e.dataset.tab)")
@@ -42,6 +42,14 @@ def modal(page, value=None, ok=True):
         page.fill("#modal-input", value)
     page.click("#modal-ok" if ok else "#modal-cancel")
     page.locator("#modal").wait_for(state="hidden")
+
+def pay_modal(page, amount, method="cash", ref=None):
+    page.locator("#pay-modal").wait_for(state="visible")
+    page.fill("#pay-amount", str(amount)); page.select_option("#pay-method", method)
+    if ref is not None:
+        page.fill("#pay-ref", ref)
+    page.click("#pay-ok")
+    page.locator("#pay-modal").wait_for(state="hidden")
 
 def visible(page):
     # الأقسام الظاهرة عبر كل التبويبات المتاحة (قسم واحد يُعرض في كل مرة)، ثم نعود للتبويب الذي كنا فيه
@@ -74,6 +82,21 @@ with sync_playwright() as p:
     page.evaluate("() => { const s = document.createElement('script'); s.textContent = 'window.__pwned = true'; document.body.appendChild(s); }")
     check("سكربت مُحقن يدويًا لا يُنفَّذ (CSP)", page.evaluate("() => window.__pwned") is None)
     check("الصفحة تعمل رغم CSP (تحمّلت app.js)", page.is_visible("#do-login"))
+
+    # التطبيق القابل للتثبيت (PWA)
+    check("رابط ملف التعريف وأيقونة الشاشة الرئيسية موجودان", page.get_attribute("link[rel=manifest]", "href") == "/manifest.webmanifest" and page.get_attribute("link[rel=apple-touch-icon]", "href") == "/apple-touch-icon.png")
+    mf = page.request.get(BASE + "/manifest.webmanifest"); mj = mf.json()
+    check("ملف التعريف: عربي RTL ومستقل وأيقونات", mf.status == 200 and mj["display"] == "standalone" and mj["dir"] == "rtl" and mj["lang"] == "ar" and len(mj["icons"]) >= 2)
+    check("الأيقونات تُخدَّم صورًا", all(page.request.get(BASE + i["src"]).headers.get("content-type") == "image/png" for i in mj["icons"]) and page.request.get(BASE + "/apple-touch-icon.png").status == 200)
+    check("عامل الخدمة يعمل", page.evaluate("() => navigator.serviceWorker.ready.then((r) => !!r.active)"))
+    cached = page.evaluate("() => caches.open('hms-shell-v1').then((c) => c.keys()).then((ks) => ks.map((k) => new URL(k.url).pathname))")
+    check("الواجهة محفوظة للعمل دون اتصال", all(x in cached for x in ["/", "/app.js", "/style.css", "/manifest.webmanifest"]))
+    ctx.set_offline(True); page.reload()
+    check("بلا إنترنت: الصفحة تُفتح من النسخة المحفوظة", page.is_visible("#do-login") and "تسجيل الدخول" in page.inner_text("body"))
+    page.fill("#slug", "alafia"); page.fill("#email", "rec@alafia.com"); page.fill("#password", "recept1234"); page.click("#do-login")
+    page.locator("#msg.err").wait_for()
+    check("بلا إنترنت: الدخول يفشل برسالة واضحة", "لا يوجد اتصال" in page.inner_text("#msg"))
+    ctx.set_offline(False)
 
     # شاشة الدخول العامة: لا أثر لمدير المنصة
     page.goto(BASE)
@@ -140,8 +163,8 @@ with sync_playwright() as p:
 
     # مدير المستشفى: كل أقسام مستشفاه
     page.click("#logout"); login(page, "alafia", "admin@alafia.com", "Platform-reset-pass-9")
-    check("تبويبات المدير والافتراضي «المواعيد»", tabs(page) == ["appts", "patients", "invoices", "team", "account"] and active_tab(page) == "appts")
-    check("المدير يرى المرضى والنموذج والمواعيد والحجز والموظفين والسجل", visible(page) == {"patients", "p-form", "appts", "a-form", "staff", "audit", "invoices", "account"})
+    check("تبويبات المدير والافتراضي «المواعيد»", tabs(page) == ["appts", "patients", "invoices", "reports", "team", "account"] and active_tab(page) == "appts")
+    check("المدير يرى المرضى والنموذج والمواعيد والحجز والموظفين والسجل", visible(page) == {"patients", "p-form", "appts", "a-form", "staff", "audit", "invoices", "reports", "account"})
     go(page, "team")
     page.locator("#audit", has_text="دخول").wait_for()
     check("سجل النشاط يعرض أحداثًا بأسماء عربية", "دخول" in page.inner_text("#audit"))
@@ -210,8 +233,8 @@ with sync_playwright() as p:
 
     # المحاسب: قائمة المرضى فقط
     page.click("#logout"); login(page, "alafia", "acc@alafia.com", "account1234")
-    check("تبويبات المحاسب والافتراضي «الفواتير»", tabs(page) == ["patients", "invoices", "account"] and active_tab(page) == "invoices")
-    check("المحاسب: قائمة المرضى فقط", visible(page) == {"patients", "invoices", "inv-form", "account"})
+    check("تبويبات المحاسب والافتراضي «الفواتير»", tabs(page) == ["patients", "invoices", "reports", "account"] and active_tab(page) == "invoices")
+    check("المحاسب: قائمة المرضى فقط", visible(page) == {"patients", "invoices", "inv-form", "reports", "account"})
     body = page.inner_text("body")
     check("المحاسب: لا يرى كلمات الحجز أو الموظفين", all(w not in body for w in ["حجز موعد", "إضافة موظف", "تسجيل مريض"]))
     check("المحاسب: نموذج الفواتير وقائمتها", page.is_visible("#inv-form") and page.is_visible("#s-invoices"))
@@ -219,9 +242,34 @@ with sync_playwright() as p:
     page.fill("#inv-total", "5000"); page.click("#do-invoice")
     page.locator("#invoices", has_text="0 / 5000").wait_for()
     page.locator("#invoices button[data-act=collect]").first.click()
-    modal(page, "2000")
+    page.locator("#pay-modal").wait_for(state="visible")
+    check("نافذة الدفعة: النقد بلا خانة رقم عملية", not page.is_visible("#pay-ref"))
+    page.select_option("#pay-method", "bankak")
+    check("نافذة الدفعة: بنكك تُظهر رقم العملية", page.is_visible("#pay-ref") and "مطلوب" in page.get_attribute("#pay-ref", "placeholder"))
+    page.select_option("#pay-method", "cash")
+    pay_modal(page, 2000)
     page.locator("#invoices", has_text="2000 / 5000").wait_for()
-    check("المحاسب: تحصيل دفعة جزئية", True)
+    check("المحاسب: تحصيل دفعة نقدية جزئية", True)
+    page.locator("#invoices button[data-act=collect]").first.click()
+    pay_modal(page, 500, "bankak", "")
+    page.locator("#msg.err").wait_for()
+    check("بنكك بلا رقم عملية: رسالة رفض واضحة", "رقم عملية بنكك" in page.inner_text("#msg"))
+    page.locator("#invoices button[data-act=collect]").first.click()
+    pay_modal(page, 500, "bankak", "BK-TEST-1")
+    page.locator("#invoices", has_text="2500 / 5000").wait_for()
+    page.locator("#invoices button[data-act=collect]").first.click()
+    pay_modal(page, 100, "bankak", "bk-test-1")
+    page.locator("#invoices", has_text="2600 / 5000").wait_for()
+    page.locator("#invoices button[data-act=collect]").first.click()
+    pay_modal(page, 100, "bankak", "BK-TEST-1")
+    page.locator("#msg.err", has_text="مسجّل من قبل").wait_for()
+    check("رقم العملية المكرر يُرفض", True)
+    page.locator("#invoices button[data-act=payments]").first.click()
+    page.locator("#inv-detail", has_text="BK-TEST-1").wait_for()
+    detail = page.inner_text("#inv-detail")
+    check("سجل دفعات الفاتورة: الطريقة والرقم والمحصِّل", "بنكك" in detail and "BK-TEST-1" in detail and "نقدًا" in detail and "عمر" in detail)
+    page.click("#inv-detail [data-act=close-payments]")
+    check("إغلاق سجل الدفعات", not page.is_visible("#inv-detail"))
     check("المحاسب: لا زر إلغاء لفاتورة عليها دفعة", page.locator("#invoices button[data-act=void]").count() == 0)
     page.fill("#inv-total", "100"); page.click("#do-invoice")
     page.locator("#invoices button[data-act=void]").first.wait_for()
@@ -232,6 +280,22 @@ with sync_playwright() as p:
     page.fill("#inv-total", "777"); page.dblclick("#do-invoice")
     page.locator("#invoices", has_text="0 / 777").wait_for(); page.wait_for_timeout(700)
     check("الضغط المزدوج على «إصدار الفاتورة» ينشئ فاتورة واحدة", page.locator("#invoices tr", has_text="0 / 777").count() == 1)
+    go(page, "reports")
+    page.locator("#r-body .kpi").first.wait_for()
+    body = page.inner_text("#r-body")
+    check("التقارير: إيراد اليوم من الدفعات (2000 نقدًا + 600 بنكك)", "2,600" in body and "2,000" in body)
+    check("التقارير: رسم الإيراد (7 أعمدة)", page.locator("#r-body svg.chart rect.bar").count() == 7)
+    check("التقارير: قسم المواعيد الفائتة", "المواعيد الفائتة" in body and "غير محصَّل" in body)
+    check("التقارير: غير المحصَّل يعكس المتبقي (7777)", True if "غير محصَّل" in body else False)
+    page.click("#r-prev")
+    prev_val = None
+    for _ in range(40):
+        prev_val = page.locator("#r-body .kpi b").first.inner_text()
+        if prev_val == "0": break
+        page.wait_for_timeout(150)
+    page.click("#r-today"); page.locator("#r-body", has_text="2,600").wait_for()
+    check("التقارير: التنقل بين الأيام يغيّر الأرقام (أمس بلا إيراد)", prev_val == "0")
+    go(page, "invoices")
     page.screenshot(path="/tmp/ui-accountant.png", full_page=True)
     go(page, "account")
     page.fill("#acc-current", "account1234"); page.fill("#acc-new", "Account-new-9915"); page.click("#do-pass")
@@ -267,7 +331,31 @@ with sync_playwright() as p:
     page.fill("#slug", "alafia"); page.fill("#email", "rec@alafia.com"); page.fill("#password", "recept1234"); page.press("#password", "Enter")
     page.wait_for_selector("#logout:not([hidden])")
     check("زر Enter يسجّل الدخول", page.is_visible("#tabs"))
+
+    # انقطاع الإنترنت بعد الدخول: تُعرض آخر بيانات، والحفظ يُمنع برسالة واضحة، والعودة تُخفي الشريط
+    page.locator("#appts tr").first.wait_for(); page.wait_for_timeout(500)
+    stored = page.evaluate("() => Object.keys(sessionStorage).filter((k) => k.startsWith('c:')).length")
+    check("نسخ القوائم محفوظة في sessionStorage فقط", stored >= 2)
+    cache_api = page.evaluate("() => caches.keys().then((ks) => Promise.all(ks.map((k) => caches.open(k).then((c) => c.keys())))).then((all) => all.flat().map((r) => new URL(r.url).pathname))")
+    check("عامل الخدمة لا يحفظ أي طلب /api (لا بيانات مرضى في الذاكرة الدائمة)", not any(x.startswith("/api/") for x in cache_api))
+    ctx.set_offline(True)
+    page.locator("#offline-bar:not([hidden])").wait_for()
+    check("شريط «غير متصل» يظهر فور الانقطاع", "غير متصل" in page.inner_text("#offline-bar"))
+    page.click("#day-today")
+    page.locator("#offline-bar", has_text="آخر بيانات حُمّلت").wait_for()
+    check("بلا إنترنت: تُعرض آخر مواعيد حُمّلت مع وقتها", "10:00" in page.inner_text("#appts") and "لا يمكن حفظ" in page.inner_text("#offline-bar"))
+    page.click("#day-next")
+    page.locator("#msg.err").wait_for()
+    check("بلا إنترنت: يوم لم يُحمَّل من قبل يعطي رسالة اتصال واضحة", "لا يوجد اتصال" in page.inner_text("#msg"))
+    page.click("#do-appt")
+    page.locator("#msg.err", has_text="لا يوجد اتصال").wait_for()
+    check("بلا إنترنت: الحجز يُمنع برسالة واضحة", True)
+    ctx.set_offline(False)
+    page.locator("#offline-bar").wait_for(state="hidden")
+    check("عودة الإنترنت تُخفي الشريط", not page.is_visible("#offline-bar"))
     page.click("#logout")
+    left = page.evaluate("() => Object.keys(sessionStorage).filter((k) => k.startsWith('c:')).length")
+    check("الخروج يمسح النسخ المحفوظة", left == 0)
 
     # ملف ناقص في النشر: الخادم يردّ بصفحة HTML بدل JSON، فيجب أن تظهر رسالة واضحة لا خطأ برمجي
     page.route("**/api/audit", lambda route: route.fulfill(status=200, content_type="text/html", body="<html>fallback</html>"))
