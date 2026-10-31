@@ -38,17 +38,48 @@ function ask({ title, text = '', input = null, value = '', okText = 'تأكيد'
   });
 }
 
+// ===== الاتصال بالخادم، مع تحمّل ضعف الإنترنت =====
+// عند انقطاع الاتصال تُعرض آخر نسخة من القوائم التي حمّلها المستخدم (في sessionStorage فقط، وتُمسح عند الخروج أو إغلاق التبويب)،
+// ويُمنع الحفظ برسالة واضحة. السجل الطبي لا يُخزَّن أبدًا لأنه الأكثر حساسية.
+const CACHEABLE = [/^\/api\/appointments\?/, /^\/api\/patients(\?|$)/, /^\/api\/invoices(\?|$)/, /^\/api\/reports\/summary/, /^\/api\/staff\?role=doctor$/];
+const cacheKey = (path) => `c:${session?.user?.id || '-'}:${path}`;
+const isCacheable = (path) => CACHEABLE.some((re) => re.test(path));
+function clearCache() { Object.keys(sessionStorage).filter((k) => k.startsWith('c:')).forEach((k) => sessionStorage.removeItem(k)); }
+function setOfflineBar(text) { const bar = $('offline-bar'); bar.textContent = text || ''; bar.hidden = !text; }
+const hhmm = (t) => new Date(t + 2 * 3600 * 1000).toISOString().slice(11, 16);
+const NET_TIMEOUT = 20000; // اتصال معلّق أكثر من 20 ثانية يُعامل كانقطاع
+
 async function api(path, { method = 'GET', body } = {}) {
-  const res = await fetch(path, {
-    method,
-    headers: { 'content-type': 'application/json', ...(session ? { authorization: 'Bearer ' + session.token } : {}) },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const isGet = method === 'GET';
+  let res;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), NET_TIMEOUT);
+    try {
+      res = await fetch(path, {
+        method,
+        headers: { 'content-type': 'application/json', ...(session ? { authorization: 'Bearer ' + session.token } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: ctrl.signal,
+      });
+    } finally { clearTimeout(timer); }
+  } catch {
+    if (isGet && isCacheable(path)) {
+      try {
+        const c = JSON.parse(sessionStorage.getItem(cacheKey(path)) || 'null');
+        if (c) { setOfflineBar(`غير متصل بالإنترنت. تُعرض آخر بيانات حُمّلت (${hhmm(c.t)})، ولا يمكن حفظ تعديلات الآن.`); return c.data; }
+      } catch { /* نسخة تالفة: تُتجاهل */ }
+    }
+    setOfflineBar('غير متصل بالإنترنت. تحقق من الاتصال ثم أعد المحاولة.');
+    throw new Error('لا يوجد اتصال بالخادم. تحقق من الإنترنت ثم أعد المحاولة');
+  }
+  setOfflineBar('');
   const isJson = (res.headers.get('content-type') || '').includes('application/json');
   const data = isJson ? await res.json().catch(() => ({})) : null;
   if (res.status === 401 && session) { logout(); say('انتهت الجلسة. سجّل الدخول مرة أخرى', 'err'); }
   if (!isJson) throw new Error('ردّ الخادم غير متوقع. غالبًا ملف ناقص في النشر: ' + path.split('?')[0]);
   if (!res.ok) throw new Error(data.error || 'حدث خطأ غير متوقع');
+  if (isGet && isCacheable(path)) { try { sessionStorage.setItem(cacheKey(path), JSON.stringify({ t: Date.now(), data })); } catch { /* الذاكرة ممتلئة */ } }
   return data;
 }
 
@@ -79,6 +110,7 @@ function render() {
   $('a-form').hidden = !(tenant && has('appointments.book'));
   $('s-invoices').hidden = !(tenant && has('invoices.read'));
   $('inv-form').hidden = !(tenant && has('invoices.create'));
+  $('s-reports').hidden = !(tenant && has('reports.view'));
   $('s-staff').hidden = !(tenant && has('staff.manage'));
   $('s-audit').hidden = !(tenant && has('audit.view'));
   $('s-account').hidden = !on;
@@ -98,10 +130,10 @@ function render() {
 }
 
 // ===== التبويبات: قسم واحد في كل مرة، والتبويبات المتاحة تتبع الصلاحيات =====
-const SECTION_TAB = { 's-platform': 'hospitals', 's-paudit': 'activity', 's-appts': 'appts', 's-patients': 'patients', 's-pfile': 'patients', 's-invoices': 'invoices', 's-staff': 'team', 's-audit': 'team', 's-account': 'account' };
-const TAB_LABELS = { hospitals: 'المستشفيات', activity: 'النشاط', appts: 'المواعيد', patients: 'المرضى', invoices: 'الفواتير', team: 'الفريق', account: 'حسابي' };
-const TAB_ORDER = ['hospitals', 'appts', 'patients', 'invoices', 'team', 'activity', 'account']; // ترتيب العرض
-const DEFAULT_TAB = ['hospitals', 'appts', 'invoices', 'patients', 'team', 'activity', 'account']; // أولوية التبويب الافتتاحي: المواعيد، وللمحاسب الفواتير
+const SECTION_TAB = { 's-platform': 'hospitals', 's-paudit': 'activity', 's-appts': 'appts', 's-patients': 'patients', 's-pfile': 'patients', 's-invoices': 'invoices', 's-reports': 'reports', 's-staff': 'team', 's-audit': 'team', 's-account': 'account' };
+const TAB_LABELS = { hospitals: 'المستشفيات', activity: 'النشاط', appts: 'المواعيد', patients: 'المرضى', invoices: 'الفواتير', reports: 'التقارير', team: 'الفريق', account: 'حسابي' };
+const TAB_ORDER = ['hospitals', 'appts', 'patients', 'invoices', 'reports', 'team', 'activity', 'account']; // ترتيب العرض
+const DEFAULT_TAB = ['hospitals', 'appts', 'invoices', 'patients', 'reports', 'team', 'activity', 'account']; // أولوية التبويب الافتتاحي: المواعيد، وللمحاسب الفواتير
 let currentTab = null;
 let permHidden = {}; // الأقسام المخفية بسبب الصلاحيات (قبل اختيار التبويب)
 
@@ -121,6 +153,7 @@ function applyTab() {
     $(id).hidden = byPerm || tab !== currentTab;
   }
   $('tabs').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.tab === currentTab));
+  if (currentTab === 'reports' && !$('s-reports').hidden) loadReports();
 }
 
 $('tabs').onclick = (ev) => {
@@ -128,7 +161,7 @@ $('tabs').onclick = (ev) => {
   currentTab = b.dataset.tab; applyTab(); window.scrollTo(0, 0);
 };
 
-function logout() { session = null; currentFile = null; editingPatient = null; currentTab = null; sessionStorage.removeItem('session'); render(); }
+function logout() { session = null; currentFile = null; editingPatient = null; currentTab = null; sessionStorage.removeItem('session'); clearCache(); render(); }
 
 $('logout').onclick = logout;
 $('toggle-setup').onclick = () => { $('s-setup').hidden = !$('s-setup').hidden; };
@@ -370,6 +403,58 @@ $('patients').onclick = async (ev) => {
   }
 };
 
+// ===== تقارير الإدارة =====
+const money = (n) => Number(n).toLocaleString('en-US');
+
+// رسم بياني بسيط لإيراد آخر 7 أيام (SVG بسمات لا بأنماط مضمّنة، فتتوافق مع سياسة الأمان). الأحدث إلى اليمين.
+function revenueChart(series, selected) {
+  const max = Math.max(1, ...series.map((x) => x.total));
+  const bars = series.map((x, i) => {
+    const h = Math.round((x.total / max) * 70), px = (6 - i) * 44 + 6, y = 82 - h;
+    return `<rect class="bar${x.date === selected ? ' sel' : ''}" x="${px}" y="${y}" width="32" height="${Math.max(h, 1)}" rx="3"/>`
+      + (x.total ? `<text class="val" x="${px + 16}" y="${y - 4}" text-anchor="middle">${money(x.total)}</text>` : '')
+      + `<text x="${px + 16}" y="98" text-anchor="middle">${x.date.slice(8)}</text>`;
+  }).join('');
+  return `<svg class="chart" viewBox="0 0 320 104" role="img" aria-label="إيراد آخر 7 أيام">${bars}</svg>`;
+}
+
+async function loadReports() {
+  try {
+    if (!$('r-day').value) $('r-day').value = todayKhartoum();
+    const r = await api('/api/reports/summary?date=' + encodeURIComponent($('r-day').value));
+    const m = r.revenue.by_method, a = r.appointments;
+    const overdue = r.overdue.items.map((x) => `<tr><td dir="ltr">${esc(x.starts_at.slice(5))}</td><td>${x.patient_name ? esc(x.patient_name) : 'مريض'}<br><small>${esc(x.doctor_name)}</small></td></tr>`).join('');
+    $('r-body').innerHTML = `
+      <div class="kpis">
+        <div class="kpi"><small>الإيراد المحصَّل</small><b dir="ltr">${money(r.revenue.total)}</b><small>${r.revenue.count} دفعة</small></div>
+        <div class="kpi"><small>غير محصَّل (فواتير مفتوحة)</small><b dir="ltr">${money(r.outstanding.total)}</b><small>${r.outstanding.count} فاتورة</small></div>
+        <div class="kpi"><small>المرضى</small><b>${r.patients.total}</b><small>${r.patients.new_today} جديد في هذا اليوم</small></div>
+        <div class="kpi"><small>مواعيد اليوم</small><b>${a.total}</b><small>تمت ${a.done} · محجوزة ${a.scheduled}</small></div>
+      </div>
+      <h3>الإيراد حسب طريقة الدفع</h3>
+      <table><tbody>
+        <tr><td>نقدًا</td><td dir="ltr">${money(m.cash.total)}</td><td>${m.cash.n} دفعة</td></tr>
+        <tr><td>بنكك</td><td dir="ltr">${money(m.bankak.total)}</td><td>${m.bankak.n} دفعة</td></tr>
+        <tr><td>أخرى</td><td dir="ltr">${money(m.other.total)}</td><td>${m.other.n} دفعة</td></tr>
+      </tbody></table>
+      <h3>إيراد آخر 7 أيام</h3>${revenueChart(r.series, r.date)}
+      <h3>المواعيد الفائتة <span class="badge ${r.overdue.count ? 'bad' : 'ok'}">${r.overdue.count}</span></h3>
+      <p class="note">محجوزة مضى وقتها دون تسجيل «تمت» أو «لم يحضر» أو إلغاء. حدّث حالتها من تبويب المواعيد.</p>
+      ${overdue ? `<table><tbody>${overdue}</tbody></table>` : '<p>لا توجد مواعيد فائتة</p>'}`;
+  } catch (e) { say(e.message, 'err'); }
+}
+
+function shiftReportDay(n) {
+  const d = new Date($('r-day').value + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  $('r-day').value = d.toISOString().slice(0, 10);
+  loadReports();
+}
+$('r-day').onchange = loadReports;
+$('r-prev').onclick = () => shiftReportDay(-1);
+$('r-next').onclick = () => shiftReportDay(1);
+$('r-today').onclick = () => { $('r-day').value = todayKhartoum(); loadReports(); };
+
 // ===== الفواتير =====
 const invStatus = { open: 'مفتوحة', paid: 'مسددة', void: 'ملغاة' };
 
@@ -383,6 +468,7 @@ async function loadInvoices() {
           + (has('invoices.void') && i.paid === 0 ? `<button class="mini" data-act="void" data-id="${esc(i.id)}">إلغاء</button>` : '')
           || actions;
       }
+      if (i.paid > 0) actions += `<button class="mini" data-act="payments" data-id="${esc(i.id)}">الدفعات</button>`;
       return `<tr class="${i.status === 'open' ? '' : 'off'}"><td>${esc(i.patient_name)}<br><small dir="ltr">${esc(khartoumTime(i.created_at))}</small><br><small>${invStatus[i.status] || esc(i.status)}</small></td><td dir="ltr">${i.paid} / ${i.total}</td><td>${actions}</td></tr>`;
     }).join('') || '<tr><td colspan="3">لا توجد فواتير بعد</td></tr>';
   } catch (e) { say(e.message, 'err'); }
@@ -395,13 +481,51 @@ $('do-invoice').onclick = async () => {
   } catch (e) { say(e.message, 'err'); }
 };
 
+const methodNames = { cash: 'نقدًا', bankak: 'بنكك', other: 'أخرى' };
+
+// نافذة تحصيل الدفعة: المبلغ وطريقة الدفع ورقم العملية (إلزامي لبنكك)
+function askPayment(left) {
+  return new Promise((resolve) => {
+    $('pay-left').textContent = `المتبقي على الفاتورة: ${left}`;
+    $('pay-amount').value = left; $('pay-method').value = 'cash'; $('pay-ref').value = '';
+    const sync = () => {
+      const m = $('pay-method').value;
+      $('pay-ref-wrap').hidden = m === 'cash';
+      $('pay-ref').placeholder = m === 'bankak' ? 'رقم عملية بنكك (مطلوب)' : 'رقم العملية (اختياري)';
+    };
+    sync(); $('pay-modal').hidden = false; $('pay-amount').focus();
+    const finish = (v) => {
+      $('pay-modal').hidden = true;
+      $('pay-ok').removeEventListener('click', ok); $('pay-cancel').removeEventListener('click', cancel);
+      $('pay-method').removeEventListener('change', sync); document.removeEventListener('keydown', key);
+      resolve(v);
+    };
+    const ok = () => finish({ amount: Number($('pay-amount').value), method: $('pay-method').value, reference: $('pay-ref').value });
+    const cancel = () => finish(null);
+    const key = (e) => { if (e.key === 'Escape') cancel(); };
+    $('pay-ok').addEventListener('click', ok); $('pay-cancel').addEventListener('click', cancel);
+    $('pay-method').addEventListener('change', sync); document.addEventListener('keydown', key);
+  });
+}
+
+async function openPayments(id) {
+  const { payments } = await api(`/api/invoices/${id}/payments`);
+  const box = $('inv-detail');
+  box.hidden = false;
+  box.innerHTML = '<h3>دفعات الفاتورة</h3>' + (payments.map((p) => `<div class="pay-row"><b dir="ltr">${p.amount}</b> · ${methodNames[p.method] || esc(p.method)}${p.reference ? ` · <span dir="ltr">${esc(p.reference)}</span>` : ''}<br><small dir="ltr">${esc(khartoumTime(p.created_at))}</small> · <small>${esc(p.collector)}</small></div>`).join('') || '<p>لا توجد دفعات مسجلة</p>')
+    + '<div class="actions"><button class="mini" data-act="close-payments">إغلاق</button></div>';
+  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+$('inv-detail').onclick = (ev) => { if (ev.target.closest('[data-act=close-payments]')) $('inv-detail').hidden = true; };
+
 $('invoices').onclick = async (ev) => {
   const b = ev.target.closest('button'); if (!b) return;
   try {
+    if (b.dataset.act === 'payments') { await openPayments(b.dataset.id); return; }
     if (b.dataset.act === 'collect') {
-      const v = await ask({ title: 'تحصيل دفعة', text: `المتبقي على الفاتورة: ${b.dataset.left}`, input: 'number', value: b.dataset.left, okText: 'تسجيل الدفعة' });
-      if (!v) return;
-      await api(`/api/invoices/${b.dataset.id}/pay`, { method: 'POST', body: { amount: Number(v) } });
+      const p = await askPayment(b.dataset.left);
+      if (!p) return;
+      await api(`/api/invoices/${b.dataset.id}/pay`, { method: 'POST', body: p });
       say('تم تسجيل الدفعة', 'ok');
     } else if (b.dataset.act === 'void') {
       if (!(await ask({ title: 'إلغاء الفاتورة', text: 'لا يمكن التراجع عن إلغاء الفاتورة.', okText: 'إلغاء الفاتورة' }))) return;
@@ -613,6 +737,13 @@ const toList = (id) => $(id).scrollIntoView({ behavior: 'smooth', block: 'start'
     try { await handler(ev); } finally { btn.disabled = false; }
   };
 });
+
+// تغيّر حالة الاتصال: ننبّه المستخدم، وعند العودة نحدّث البيانات
+window.addEventListener('offline', () => setOfflineBar('غير متصل بالإنترنت. تُعرض آخر بيانات حُمّلت، ولا يمكن حفظ تعديلات الآن.'));
+window.addEventListener('online', () => { setOfflineBar(''); if (session) render(); });
+
+// عامل الخدمة: يجعل التطبيق قابلًا للتثبيت على الشاشة الرئيسية ويفتح بلا إنترنت
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 
 window.addEventListener('hashchange', () => { if (!session) render(); });
 
