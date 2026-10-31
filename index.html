@@ -4,9 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>نظام المستشفيات · لوحة الاختبار</title>
+<meta name="theme-color" content="#1b3556">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="المستشفى">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+<div id="offline-bar" role="status" aria-live="polite" hidden></div>
 <header>
   <div><h1 id="title">نظام إدارة المستشفيات</h1><small id="who">لم تسجل الدخول</small></div>
   <button class="ghost" id="logout" hidden>خروج</button>
@@ -105,12 +113,20 @@
     <h2 id="inv-list-title">الفواتير</h2>
     <button class="line jump" data-jump="inv-form">+ إصدار فاتورة جديدة</button>
     <table><thead><tr><th>المريض</th><th>المبلغ</th><th></th></tr></thead><tbody id="invoices"></tbody></table>
+    <div id="inv-detail" class="card" hidden></div>
     <div id="inv-form" class="mt">
       <h2>إصدار فاتورة</h2>
       <label for="inv-patient-q">المريض</label><input id="inv-patient-q" placeholder="ابحث بالاسم أو الهاتف أو رقم الملف"><select id="inv-patient" aria-label="المريض"></select>
       <label for="inv-total">المبلغ</label><input id="inv-total" type="number" inputmode="numeric" min="1" dir="ltr">
       <button id="do-invoice">إصدار الفاتورة</button>
     </div>
+  </section>
+
+  <section id="s-reports" hidden>
+    <h2>تقارير الإدارة</h2>
+    <label for="r-day">اليوم</label><input id="r-day" type="date" dir="ltr">
+    <div class="actions"><button class="mini" id="r-prev">اليوم السابق</button><button class="mini" id="r-today">اليوم</button><button class="mini" id="r-next">اليوم التالي</button></div>
+    <div id="r-body"></div>
   </section>
 
   <section id="s-staff" hidden>
@@ -141,6 +157,18 @@
 </main>
 
 <nav id="tabs" aria-label="التنقل" hidden></nav>
+
+<div id="pay-modal" role="dialog" aria-modal="true" aria-labelledby="pay-title" hidden>
+  <div class="modal-box">
+    <h3 id="pay-title">تحصيل دفعة</h3>
+    <p id="pay-left"></p>
+    <label for="pay-amount">المبلغ</label><input id="pay-amount" type="number" inputmode="numeric" min="1" dir="ltr">
+    <label for="pay-method">طريقة الدفع</label>
+    <select id="pay-method"><option value="cash">نقدًا</option><option value="bankak">بنكك</option><option value="other">أخرى</option></select>
+    <div id="pay-ref-wrap"><label for="pay-ref">رقم العملية</label><input id="pay-ref" dir="ltr" autocomplete="off" autocapitalize="characters"></div>
+    <div class="actions"><button id="pay-ok">تسجيل الدفعة</button><button class="line" id="pay-cancel">إلغاء</button></div>
+  </div>
+</div>
 
 <div id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" hidden>
   <div class="modal-box">
