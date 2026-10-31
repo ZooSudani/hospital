@@ -1,6 +1,6 @@
 // خادم محلي يشغّل معالجات Pages Functions الحقيقية فوق SQLite، لاختبار الواجهة في متصفح فعلي.
 import http from 'node:http';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { makeDb } from '../d1-shim.js';
 import { onRequest as middleware } from '../../functions/_middleware.js';
 import * as setup from '../../functions/api/setup.js';
@@ -22,6 +22,8 @@ import * as meApi from '../../functions/api/me.js';
 import * as invoices from '../../functions/api/invoices/index.js';
 import * as invoiceOne from '../../functions/api/invoices/[id].js';
 import * as invoicePay from '../../functions/api/invoices/[id]/pay.js';
+import * as invoicePayments from '../../functions/api/invoices/[id]/payments.js';
+import * as reportSummary from '../../functions/api/reports/summary.js';
 import * as visits from '../../functions/api/patients/[id]/visits.js';
 import * as staffPerms from '../../functions/api/staff/[id]/permissions.js';
 import * as platformPerms from '../../functions/api/platform/tenants/[id]/staff/[uid]/permissions.js';
@@ -32,7 +34,7 @@ const routes = [
   [/^\/api\/patients$/, patients], [/^\/api\/patients\/([^/]+)$/, patient],
   [/^\/api\/staff$/, staff], [/^\/api\/staff\/([^/]+)$/, staffOne],
   [/^\/api\/appointments$/, appts], [/^\/api\/appointments\/([^/]+)$/, apptOne], [/^\/api\/audit$/, audit], [/^\/api\/me$/, meApi],
-  [/^\/api\/invoices$/, invoices], [/^\/api\/invoices\/([^/]+)$/, invoiceOne], [/^\/api\/invoices\/([^/]+)\/pay$/, invoicePay],
+  [/^\/api\/invoices$/, invoices], [/^\/api\/invoices\/([^/]+)$/, invoiceOne], [/^\/api\/invoices\/([^/]+)\/pay$/, invoicePay], [/^\/api\/invoices\/([^/]+)\/payments$/, invoicePayments], [/^\/api\/reports\/summary$/, reportSummary],
   [/^\/api\/patients\/([^/]+)\/visits$/, visits], [/^\/api\/staff\/([^/]+)\/permissions$/, staffPerms],
   [/^\/api\/platform\/tenants\/([^/]+)\/staff\/([^/]+)\/permissions$/, platformPerms], [/^\/api\/platform\/tenants\/([^/]+)$/, tenantOne], [/^\/api\/platform\/tenants\/([^/]+)\/staff$/, tenantStaff], [/^\/api\/platform\/tenants\/([^/]+)\/staff\/([^/]+)$/, tenantStaffOne], [/^\/api\/platform\/audit$/, platformAudit], [/^\/api\/account\/password$/, accountPw],
 ];
@@ -41,7 +43,12 @@ http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   if (!url.pathname.startsWith('/api/')) {
     // ملفات ثابتة مع رؤوس _headers نفسها التي ستطبقها Cloudflare Pages
-    const files = { '/': ['index.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'] };
+    const types = { html: 'text/html; charset=utf-8', js: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', png: 'image/png', webmanifest: 'application/manifest+json' };
+    const files = { '/': ['index.html', types.html] };
+    for (const name of readdirSync(new URL('../../public/', import.meta.url))) {
+      if (name === '_headers') continue;
+      files['/' + name] = [name, types[name.split('.').pop()] || 'application/octet-stream'];
+    }
     const f = files[url.pathname];
     if (!f) { res.writeHead(404); return res.end('not found'); }
     const headers = { 'content-type': f[1] };
