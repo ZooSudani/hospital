@@ -10,13 +10,13 @@ export function makeDb(schema) {
     async first() { return sqlite.prepare(sql).get(...args) ?? null; },
     async all() { return { results: sqlite.prepare(sql).all(...args) }; },
     async run() { const r = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(r.changes) } }; },
-    _exec() { sqlite.prepare(sql).run(...args); },
+    _exec() { const r = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(r.changes) } }; },
   });
   return {
     prepare: (sql) => stmt(sql),
     async batch(list) {
       sqlite.exec('BEGIN');
-      try { list.forEach((s) => s._exec()); sqlite.exec('COMMIT'); }
+      try { const out = list.map((s) => s._exec()); sqlite.exec('COMMIT'); return out; }
       catch (e) { sqlite.exec('ROLLBACK'); throw e; }
     },
     raw: sqlite,
