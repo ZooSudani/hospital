@@ -15,6 +15,8 @@ import { onRequestPatch as patchAppt } from '../functions/api/appointments/[id].
 import { onRequestGet as listInvoices, onRequestPost as addInvoice } from '../functions/api/invoices/index.js';
 import { onRequestPatch as patchInvoice } from '../functions/api/invoices/[id].js';
 import { onRequestPost as payInvoice } from '../functions/api/invoices/[id]/pay.js';
+import { onRequestGet as listPayments } from '../functions/api/invoices/[id]/payments.js';
+import { onRequestGet as reportSummary } from '../functions/api/reports/summary.js';
 import { onRequestGet as listStaff, onRequestPost as addStaff } from '../functions/api/staff/index.js';
 import { onRequestPatch as patchStaff } from '../functions/api/staff/[id].js';
 import { onRequestGet as getPerms, onRequestPut as putPerms } from '../functions/api/staff/[id]/permissions.js';
@@ -92,6 +94,9 @@ const ops = [
   ['invoices.create', 'invoices.create', (t) => post(addInvoice, '/api/invoices', { patient_id: p1, total: 5000 }, { token: t })],
 ];
 const roles = ['admin', 'doctor', 'reception', 'accountant'];
+const invSeed = (await post(addInvoice, '/api/invoices', { patient_id: p1, total: 900 }, { token: T.accountant })).body.id;
+ops.push(['reports.view', 'reports.view', (t) => call(reportSummary, { token: t })]);
+ops.push(['invoices.read: دفعات فاتورة', 'invoices.read', (t) => call(listPayments, { token: t, params: { id: invSeed } })]);
 let checks = 0;
 for (const [name, perm, run] of ops) {
   for (const role of roles) {
@@ -109,7 +114,7 @@ console.log(`  المصفوفة: ${checks} فحصًا (${ops.length} عملية 
 // عمليات تحتاج حالة خاصة
 const inv = (await call(listInvoices, { token: T.accountant })).body.invoices[0].id;
 for (const role of roles) {
-  const collect = await post(payInvoice, '/api/x', { amount: 1 }, { token: T[role], params: { id: inv } });
+  const collect = await post(payInvoice, '/api/x', { amount: 1, method: 'cash' }, { token: T[role], params: { id: inv } });
   assert.equal(collect.status === 403, !ROLE_DEFAULTS[role].includes('invoices.collect'), 'تحصيل: ' + role);
 }
 const inv2 = (await post(addInvoice, '/api/invoices', { patient_id: p1, total: 700 }, { token: T.accountant })).body.id;
@@ -154,7 +159,7 @@ assert.equal((await post(addInvoice, '/api/invoices', { patient_id: p1, total: '
 assert.equal((await post(addInvoice, '/api/invoices', { patient_id: p1, total: 1e12 }, { token: T.accountant })).status, 400, 'حد أعلى');
 assert.equal((await post(addInvoice, '/api/invoices', { patient_id: pAmal, total: 100 }, { token: T.accountant })).status, 400, 'مريض مستشفى آخر');
 const inv3 = (await post(addInvoice, '/api/invoices', { patient_id: p1, total: 1000 }, { token: T.accountant })).body.id;
-const pay = (amount, id = inv3) => post(payInvoice, '/api/x', { amount }, { token: T.accountant, params: { id } });
+const pay = (amount, id = inv3) => post(payInvoice, '/api/x', { amount, method: 'cash' }, { token: T.accountant, params: { id } });
 assert.equal((await pay(0)).status, 400);
 assert.equal((await pay(-100)).status, 400);
 assert.equal((await pay(1500)).status, 409, 'لا يتجاوز قيمة الفاتورة');
@@ -168,9 +173,9 @@ assert.equal((await pay(1)).status, 409, 'لا دفع على فاتورة مغل
 const voided = (await call(listInvoices, { token: T.accountant })).body.invoices.find((i) => i.id === inv2);
 assert.equal(voided.status, 'void');
 assert.equal((await pay(5, inv2)).status, 409, 'لا دفع على فاتورة ملغاة');
-assert.equal((await post(payInvoice, '/api/x', { amount: 5 }, { token: adminAmal, params: { id: inv3 } })).status, 403);
+assert.equal((await post(payInvoice, '/api/x', { amount: 5, method: 'cash' }, { token: adminAmal, params: { id: inv3 } })).status, 403);
 const amalAccountant = await (async () => { await mk(adminAmal, 'محاسب الأمل', 'acc@alamal.com', 'accountant'); return (await loginAs('alamal', 'acc@alamal.com', 'Staff-pass-7731')).token; })();
-assert.equal((await post(payInvoice, '/api/x', { amount: 5 }, { token: amalAccountant, params: { id: inv3 } })).status, 404, 'محاسب مستشفى آخر لا يصل لفاتورتنا');
+assert.equal((await post(payInvoice, '/api/x', { amount: 5, method: 'cash' }, { token: amalAccountant, params: { id: inv3 } })).status, 404, 'محاسب مستشفى آخر لا يصل لفاتورتنا');
 assert.equal((await call(listInvoices, { token: amalAccountant })).body.invoices.length, 0, 'عزل الفواتير');
 
 // ===== 5) تعديل المريض =====
