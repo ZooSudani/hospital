@@ -31,6 +31,8 @@ for (const [role, perms] of Object.entries(ROLE_DEFAULTS)) {
   assert.equal(new Set(perms).size, perms.length, `${role}: تكرار`);
 }
 assert.ok(!ROLE_DEFAULTS.admin.includes('visits.read') && !ROLE_DEFAULTS.admin.includes('invoices.collect'), 'فصل المهام: المدير لا يقرأ السجل الطبي ولا يحصّل المال');
+assert.ok(ROLE_DEFAULTS.admin.every((k) => !k.startsWith('patients.') && !k.startsWith('appointments.') && !k.startsWith('visits.')), 'المدير لا يدير المرضى ولا المواعيد (عمل الاستقبال والأطباء)');
+assert.deepEqual([...ROLE_DEFAULTS.admin].sort(), ['audit.view', 'invoices.read', 'reports.view', 'staff.manage'], 'صلاحيات المدير: الإدارة والرقابة والتقارير وعرض الفواتير');
 assert.ok(!ROLE_DEFAULTS.reception.includes('visits.read'), 'الاستقبال لا يقرأ السجل الطبي');
 assert.ok(ROLE_DEFAULTS.doctor.includes('visits.write') && !ROLE_DEFAULTS.doctor.includes('patients.create'), 'الطبيب يكتب السجل ولا يسجل المرضى');
 assert.ok(!ROLE_DEFAULTS.accountant.includes('visits.read'), 'المحاسب لا يقرأ السجل الطبي');
@@ -71,7 +73,9 @@ const adminId = raw.prepare(`SELECT id FROM users WHERE email = 'admin@alnoor.co
 // مريضان ومعهما موعد لكل طبيب
 const p1 = (await post(addPatient, '/api/patients', { full_name: 'أحمد محمد علي', phone: '0911111111' }, { token: T.reception })).body.id;
 const p2 = (await post(addPatient, '/api/patients', { full_name: 'سارة عثمان' }, { token: T.reception })).body.id;
-const pAmal = (await post(addPatient, '/api/patients', { full_name: 'مريض الأمل' }, { token: adminAmal })).body.id;
+await mk(adminAmal, 'استقبال الأمل', 'front@alamal.com', 'reception');
+const amalRec = (await loginAs('alamal', 'front@alamal.com', 'Staff-pass-7731')).token;
+const pAmal = (await post(addPatient, '/api/patients', { full_name: 'مريض الأمل' }, { token: amalRec })).body.id;
 const day = '2026-12-01';
 const a1 = (await post(addAppt, '/api/appointments', { patient_id: p1, doctor_id: ids.doctor, starts_at: `${day} 09:00` }, { token: T.reception })).body.id;
 const a2 = (await post(addAppt, '/api/appointments', { patient_id: p2, doctor_id: ids.doctor2, starts_at: `${day} 09:00` }, { token: T.reception })).body.id;
