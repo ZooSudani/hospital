@@ -43,17 +43,19 @@ const adminAmal = await loginAs('alamal', 'admin@alamal.com', 'Hospital-8842');
 const mk = async (token, name, email, role) => (await post(addStaff, '/api/staff', { name, email, password: 'Staff-pass-7731', role }, { token })).body.id;
 const ids = { acc: await mk(adminNoor, 'عمر', 'omar@alnoor.com', 'accountant'), rec: await mk(adminNoor, 'ريم', 'reem@alnoor.com', 'reception'), doc: await mk(adminNoor, 'د. هالة', 'hala@alnoor.com', 'doctor') };
 await mk(adminAmal, 'محاسب الأمل', 'acc@alamal.com', 'accountant');
+await mk(adminAmal, 'استقبال الأمل', 'front@alamal.com', 'reception');
 const T = {
   admin: adminNoor,
   acc: await loginAs('alnoor', 'omar@alnoor.com', 'Staff-pass-7731'),
   rec: await loginAs('alnoor', 'reem@alnoor.com', 'Staff-pass-7731'),
   doc: await loginAs('alnoor', 'hala@alnoor.com', 'Staff-pass-7731'),
   amalAcc: await loginAs('alamal', 'acc@alamal.com', 'Staff-pass-7731'),
+  amalRec: await loginAs('alamal', 'front@alamal.com', 'Staff-pass-7731'),
 };
 const p1 = (await post(addPatient, '/api/patients', { full_name: 'أحمد محمد علي' }, { token: T.rec })).body.id;
 const p2 = (await post(addPatient, '/api/patients', { full_name: 'سارة عثمان' }, { token: T.rec })).body.id;
 const p3 = (await post(addPatient, '/api/patients', { full_name: 'خالد قديم' }, { token: T.rec })).body.id;
-const pAmal = (await post(addPatient, '/api/patients', { full_name: 'مريض الأمل' }, { token: adminAmal })).body.id;
+const pAmal = (await post(addPatient, '/api/patients', { full_name: 'مريض الأمل' }, { token: T.amalRec })).body.id;
 const invoice = async (token, patient, total) => (await post(addInvoice, '/api/invoices', { patient_id: patient, total }, { token })).body.id;
 const pay = (token, id, body) => post(payInvoice, '/api/x', body, { token, params: { id } });
 const payments = (token, id) => call(listPayments, { token, params: { id } });
@@ -182,7 +184,9 @@ rp = (await summary(T.admin)).body;
 assert.deepEqual(rp.appointments, { total: 4, done: 1, scheduled: 1, cancelled: 1, no_show: 1 });
 const expectedOverdue = ['07:45', '10:00'].length ? [`${today} 07:45`, `${yesterday} 10:00`].filter((x) => x < nowLocal).length : 0;
 assert.equal(rp.overdue.count, expectedOverdue, 'الفائتة: محجوزة مضى وقتها (وليست «تمت» ولا «لم يحضر» ولا ملغاة)');
-assert.ok(rp.overdue.items.some((x) => x.id === aOld && x.patient_name === 'أحمد محمد علي'), 'موعد الأمس المحجوز فائت');
+assert.ok(rp.overdue.items.some((x) => x.id === aOld), 'موعد الأمس المحجوز فائت');
+assert.ok(rp.overdue.items.every((x) => x.patient_name === null), 'المدير لا يملك patients.read فلا يرى أسماء المرضى (أعداد وأوقات وأطباء فقط)');
+assert.ok((await summary(T.acc)).body.overdue.items.some((x) => x.id === aOld && x.patient_name === 'أحمد محمد علي'), 'من يملك patients.read (المحاسب) يرى الاسم');
 assert.ok(!rp.overdue.items.some((x) => x.id === aFuture), 'موعد الغد ليس فائتًا');
 assert.ok(rp.overdue.items.every((x, i, a) => i === 0 || a[i - 1].starts_at >= x.starts_at), 'الأحدث أولًا');
 assert.equal((await summary(T.admin, `?date=${yesterday}`)).body.appointments.scheduled, 1, 'مواعيد يوم سابق حسب تاريخه');
