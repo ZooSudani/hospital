@@ -1,4 +1,4 @@
-// اختبارات الأمان: التخمين، الجلسات، الصلاحيات، سجل النشاط، تسريب  الأخطاء، وحجم الطلب.
+// اختبارات الأمان: التخمين، الجلسات، الصلاحيات، سجل النشاط، تسريب الأخطاء، وحجم الطلب.
 import assert from 'node:assert/strict';
 import { makeDb } from './d1-shim.js';
 import { signToken } from '../lib/auth.js';
@@ -64,7 +64,8 @@ const newPatient = (token, name = 'مريض اختبار') => post(addPatient, '
 assert.equal((await newPatient(doctor)).status, 403, 'الطبيب لا يسجل مريضًا');
 assert.equal((await newPatient(accountant)).status, 403, 'المحاسب لا يسجل مريضًا');
 assert.equal((await newPatient(reception)).status, 201, 'الاستقبال يسجل');
-assert.equal((await newPatient(adminNoor, 'مريض ثانٍ')).status, 201, 'المدير يسجل');
+assert.equal((await newPatient(adminNoor, 'مريض ثانٍ')).status, 403, 'المدير لا يسجل مرضى (عمل الاستقبال)');
+assert.equal((await newPatient(reception, 'مريض ثانٍ')).status, 201, 'الاستقبال يسجل');
 assert.equal((await call(listPatients, { token: doctor })).status, 200, 'الطبيب يقرأ');
 assert.equal((await call(listPatients, { token: accountant })).status, 200, 'المحاسب يقرأ');
 assert.equal((await call(listPatients, { token: platform })).status, 403, 'مدير المنصة لا يرى المرضى');
