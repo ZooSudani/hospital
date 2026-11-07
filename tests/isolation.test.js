@@ -1,4 +1,4 @@
-// اختبار  شامل: يمرّ كل طلب عبر الـ middleware ثم الـ handler الحقيقي، على SQLite محلية.
+// اختبار شامل: يمرّ كل طلب عبر الـ middleware ثم الـ handler الحقيقي، على SQLite محلية.
 import assert from 'node:assert/strict';
 import { makeDb } from './d1-shim.js';
 import { onRequest as middleware } from '../functions/_middleware.js';
@@ -49,31 +49,39 @@ const tokenOf = async (slug) =>
 const noor = await tokenOf('alnoor');
 const amal = await tokenOf('alamal');
 
+// المرضى والمواعيد عمل الاستقبال لا المدير: لكل مستشفى موظف استقبال تُنشأ به البيانات
+const mkReception = async (adminToken, slug, email) => {
+  await call(addStaff, { path: '/api/staff', method: 'POST', token: adminToken, body: { name: 'استقبال ' + slug, email, password: 'Reception-pass-77', role: 'reception' } });
+  return (await call(login, { path: '/api/auth/login', method: 'POST', body: { slug, email, password: 'Reception-pass-77' } })).body.token;
+};
+const noorR = await mkReception(noor, 'alnoor', 'front@alnoor.com');
+const amalR = await mkReception(amal, 'alamal', 'front@alamal.com');
+
 // 3) مدير المستشفى لا يصل لواجهات المنصة، ومدير المنصة لا يصل لبيانات المرضى
 assert.equal((await call(listTenants, { token: noor })).status, 403);
 assert.equal((await call(listPatients, { token: platform })).status, 403);
 
 // 4) مرضى كل مستشفى
-const p1 = (await call(addPatient, { method: 'POST', token: noor, body: { full_name: 'أحمد محمد علي', phone: '0912345678' } })).body;
-const p2 = (await call(addPatient, { method: 'POST', token: noor, body: { full_name: 'سارة عثمان' } })).body;
-const p3 = (await call(addPatient, { method: 'POST', token: amal, body: { full_name: 'خالد إبراهيم' } })).body;
+const p1 = (await call(addPatient, { method: 'POST', token: noorR, body: { full_name: 'أحمد محمد علي', phone: '0912345678' } })).body;
+const p2 = (await call(addPatient, { method: 'POST', token: noorR, body: { full_name: 'سارة عثمان' } })).body;
+const p3 = (await call(addPatient, { method: 'POST', token: amalR, body: { full_name: 'خالد إبراهيم' } })).body;
 assert.equal(p1.file_no, '1'); assert.equal(p2.file_no, '2'); assert.equal(p3.file_no, '1', 'ترقيم الملفات مستقل لكل مستشفى');
 
-const listNoor = (await call(listPatients, { token: noor })).body.patients;
-const listAmal = (await call(listPatients, { token: amal })).body.patients;
+const listNoor = (await call(listPatients, { token: noorR })).body.patients;
+const listAmal = (await call(listPatients, { token: amalR })).body.patients;
 assert.equal(listNoor.length, 2); assert.equal(listAmal.length, 1);
 assert.ok(!listNoor.some((p) => p.full_name === 'خالد إبراهيم'));
-assert.equal((await call(listPatients, { path: '/api/patients?q=سارة', token: noor })).body.patients.length, 1);
+assert.equal((await call(listPatients, { path: '/api/patients?q=سارة', token: noorR })).body.patients.length, 1);
 
 // 5) محاولة وصول عابر: مستشفى الأمل يطلب مريضًا من النور
-r = await call(getPatient, { token: amal, params: { id: p1.id } });
+r = await call(getPatient, { token: amalR, params: { id: p1.id } });
 assert.equal(r.status, 404, 'يجب ألا يرى مستشفى الأمل مريض النور');
-assert.equal((await call(getPatient, { token: noor, params: { id: p1.id } })).status, 200);
+assert.equal((await call(getPatient, { token: noorR, params: { id: p1.id } })).status, 200);
 
 // 6) IDOR: إرسال tenant_id في جسم الطلب يجب أن يُتجاهل
-r = await call(addPatient, { method: 'POST', token: amal, body: { full_name: 'محاولة اختراق', tenant_id: 'any', tid: 'any' } });
+r = await call(addPatient, { method: 'POST', token: amalR, body: { full_name: 'محاولة اختراق', tenant_id: 'any', tid: 'any' } });
 assert.equal(r.status, 201);
-assert.ok(!(await call(listPatients, { token: noor })).body.patients.some((p) => p.full_name === 'محاولة اختراق'));
+assert.ok(!(await call(listPatients, { token: noorR })).body.patients.some((p) => p.full_name === 'محاولة اختراق'));
 
 // 7) المفتاح الأجنبي المركب يمنع ربط سجل بمريض مستشفى آخر على مستوى القاعدة
 const raw = env.DB.raw;
@@ -87,8 +95,8 @@ assert.throws(
 
 // 8) إيقاف مستشفى يقطع الوصول فورًا رغم صلاحية التوكن
 raw.prepare(`UPDATE tenants SET status = 'suspended' WHERE slug = 'alnoor'`).run();
-assert.equal((await call(listPatients, { token: noor })).status, 403);
-assert.equal((await call(listPatients, { token: amal })).status, 200);
+assert.equal((await call(listPatients, { token: noorR })).status, 403);
+assert.equal((await call(listPatients, { token: amalR })).status, 200);
 
 // 9) دخول بكلمة مرور خاطئة أو مستشفى غير موجود
 assert.equal((await call(login, { path: '/api/auth/login', method: 'POST', body: { slug: 'alamal', email: 'admin@alamal.com', password: 'wrong' } })).status, 401);
@@ -120,8 +128,8 @@ assert.equal((await call(addPatient, { method: 'POST', token: doctorToken, body:
 assert.equal((await call(listPatients, { token: doctorToken })).status, 200, 'لكنه يقرأ قائمة المرضى');
 
 // 12) عزل الموظفين بين المستشفيات
-assert.equal((await call(listStaff, { token: noor })).body.staff.length, 3);
-assert.equal((await call(listStaff, { token: amal })).body.staff.length, 2);
+assert.equal((await call(listStaff, { token: noor })).body.staff.length, 4);
+assert.equal((await call(listStaff, { token: amal })).body.staff.length, 3);
 r = await call(patchStaff, { method: 'PATCH', token: amal, params: { id: doctorNoorId }, body: { active: false } });
 assert.equal(r.status, 404, 'مدير الأمل لا يعدّل موظف النور');
 assert.equal((await call(listPatients, { token: doctorToken })).status, 200, 'طبيب النور ما زال فعّالًا');
@@ -186,8 +194,8 @@ assert.equal((await book(reception, { patient_id: p1.id, doctor_id: adminNoorId,
 // 19) العزل: لا مريض ولا طبيب من مستشفى آخر
 assert.equal((await book(reception, { patient_id: p3.id, doctor_id: dr1, starts_at: `${day} 12:00` })).status, 400, 'مريض الأمل');
 assert.equal((await book(reception, { patient_id: p1.id, doctor_id: drAmal, starts_at: `${day} 12:00` })).status, 400, 'طبيب الأمل');
-assert.equal((await call(listAppts, { path: `/api/appointments?date=${day}`, token: amal })).body.appointments.length, 0);
-assert.equal((await call(patchAppt, { method: 'PATCH', token: amal, params: { id: apptId }, body: { status: 'cancelled' } })).status, 404, 'مدير الأمل لا يلغي موعد النور');
+assert.equal((await call(listAppts, { path: `/api/appointments?date=${day}`, token: amalR })).body.appointments.length, 0);
+assert.equal((await call(patchAppt, { method: 'PATCH', token: amalR, params: { id: apptId }, body: { status: 'cancelled' } })).status, 404, 'مدير الأمل لا يلغي موعد النور');
 
 // 20) الصلاحيات: الطبيب لا يحجز، ويرى مواعيده فقط، والمحاسب لا يرى المواعيد
 assert.equal((await book(doc1Token, { patient_id: p1.id, doctor_id: dr1, starts_at: `${day} 13:00` })).status, 403);
