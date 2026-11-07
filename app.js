@@ -141,7 +141,11 @@ function buildTabs() {
   permHidden = Object.fromEntries(Object.keys(SECTION_TAB).map((id) => [id, $(id).hidden]));
   const open = TAB_ORDER.filter((t) => Object.entries(SECTION_TAB).some(([id, tab]) => tab === t && id !== 's-pfile' && !permHidden[id]));
   if (!session || !open.length) { currentTab = null; $('tabs').innerHTML = ''; $('tabs').hidden = true; document.body.classList.remove('has-tabs'); return; }
-  if (!open.includes(currentTab)) currentTab = DEFAULT_TAB.find((t) => open.includes(t));
+  if (!open.includes(currentTab)) {
+    // التبويب الافتتاحي حسب طبيعة العمل: الجدول لمن يتعامل مع المواعيد، والفواتير لمن يصدرها، والتقارير للإدارة
+    const first = has('appointments.read') ? 'appts' : has('invoices.create') ? 'invoices' : 'reports';
+    currentTab = [first, ...DEFAULT_TAB].find((t) => open.includes(t));
+  }
   $('tabs').innerHTML = open.map((t) => `<button data-tab="${t}">${TAB_LABELS[t]}</button>`).join('');
   $('tabs').hidden = false; document.body.classList.add('has-tabs');
   applyTab();
