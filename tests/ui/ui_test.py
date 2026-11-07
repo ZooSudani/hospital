@@ -17,9 +17,11 @@ adm = api("/api/auth/login", "POST", {"slug": "alafia", "email": "admin@alafia.c
 doc_id = api("/api/staff", "POST", {"name": "د. منتصر", "email": "doc@alafia.com", "password": "doctor1234", "role": "doctor"}, adm)[1]["id"]
 api("/api/staff", "POST", {"name": "معاذ", "email": "rec@alafia.com", "password": "recept1234", "role": "reception"}, adm)
 api("/api/staff", "POST", {"name": "عمر", "email": "acc@alafia.com", "password": "account1234", "role": "accountant"}, adm)
-pid = api("/api/patients", "POST", {"full_name": "محمد آدم", "phone": "0918155613"}, adm)[1]["id"]
-api("/api/patients", "POST", {"full_name": "سارة عثمان", "phone": "0912345678"}, adm)
-api("/api/patients", "POST", {"full_name": "<img src=x onerror=window.__xss=1>", "phone": "<b>0900</b>"}, adm)
+front = api("/api/auth/login", "POST", {"slug": "alafia", "email": "rec@alafia.com", "password": "recept1234"})[1]["token"]
+check_admin_blocked = api("/api/patients", "POST", {"full_name": "محاولة المدير", "phone": "0900"}, adm)[0]
+pid = api("/api/patients", "POST", {"full_name": "محمد آدم", "phone": "0918155613"}, front)[1]["id"]
+api("/api/patients", "POST", {"full_name": "سارة عثمان", "phone": "0912345678"}, front)
+api("/api/patients", "POST", {"full_name": "<img src=x onerror=window.__xss=1>", "phone": "<b>0900</b>"}, front)
 
 results = []
 def check(name, cond):
@@ -163,8 +165,13 @@ with sync_playwright() as p:
 
     # مدير المستشفى: كل أقسام مستشفاه
     page.click("#logout"); login(page, "alafia", "admin@alafia.com", "Platform-reset-pass-9")
-    check("تبويبات المدير والافتراضي «المواعيد»", tabs(page) == ["appts", "patients", "invoices", "reports", "team", "account"] and active_tab(page) == "appts")
-    check("المدير يرى المرضى والنموذج والمواعيد والحجز والموظفين والسجل", visible(page) == {"patients", "p-form", "appts", "a-form", "staff", "audit", "invoices", "reports", "account"})
+    check("المدير لا يسجل مرضى (رفض الخادم)", check_admin_blocked == 403)
+    check("تبويبات المدير: الإدارة والرقابة فقط، والافتراضي «التقارير»", tabs(page) == ["invoices", "reports", "team", "account"] and active_tab(page) == "reports")
+    check("المدير يرى التقارير والفواتير (عرض) والموظفين والسجل، ولا مرضى ولا مواعيد", visible(page) == {"invoices", "reports", "staff", "audit", "account"})
+    body_admin = page.inner_text("body")
+    check("المدير: لا تبويبي المرضى والمواعيد ولا نماذجهما", "المرضى" not in page.inner_text("#tabs") and "المواعيد" not in page.inner_text("#tabs") and page.locator("#a-form, #p-form").count() == 2 and not page.is_visible("#p-form") and not page.is_visible("#a-form"))
+    page.locator("#r-body .kpi").first.wait_for()
+    check("تقرير المدير: أرقام بلا أسماء مرضى", "محمد" not in page.inner_text("#r-body") and "سارة" not in page.inner_text("#r-body"))
     go(page, "team")
     page.locator("#audit", has_text="دخول").wait_for()
     check("سجل النشاط يعرض أحداثًا بأسماء عربية", "دخول" in page.inner_text("#audit"))
@@ -362,7 +369,7 @@ with sync_playwright() as p:
     login(page, "alafia", "admin@alafia.com", "Platform-reset-pass-9")
     page.locator("#msg", has_text="ملف ناقص").wait_for()
     check("ملف ناقص في النشر: رسالة واضحة بدل events.map", "events.map" not in page.inner_text("#msg") and "/api/audit" in page.inner_text("#msg"))
-    go(page, "patients"); ok1 = page.is_visible("#s-patients")
+    go(page, "reports"); ok1 = page.is_visible("#s-reports")
     go(page, "team"); ok2 = page.is_visible("#s-staff")
     check("باقي الصفحة تعمل رغم النقص", ok1 and ok2)
     page.unroute("**/api/audit")
