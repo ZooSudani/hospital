@@ -55,8 +55,12 @@ export async function onRequest({ request, env, next, data }) {
     }
   } catch (e) {
     // خطأ الحارس (IsolationError) أو أي خلل داخلي: يُسجَّل ولا تُكشف تفاصيله للمستخدم
-    console.error('request failed', e?.code || '', e?.message || e);
-    res = fail(500, 'خطأ داخلي في الخادم');
+    const msg = String(e?.message || e);
+    console.error('request failed', e?.code || '', msg);
+    // جدول أو عمود ناقص يعني أن ملف ترحيل لم يُشغَّل في قاعدة البيانات بعد رفع كود جديد
+    res = /no such (table|column)|has no column named/i.test(msg)
+      ? fail(503, 'قاعدة البيانات تحتاج تحديثًا (ترحيل ناقص). أبلغ مدير المنصة ليشغّل ملفات الترحيل.')
+      : fail(500, 'خطأ داخلي في الخادم');
   }
   const out = new Response(res.body, res);
   for (const [k, v] of Object.entries(HARDEN)) out.headers.set(k, v);
