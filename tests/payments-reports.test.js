@@ -175,11 +175,13 @@ rp = (await summary(T.admin)).body;
 assert.equal(rp.patients.total, 3); assert.equal(rp.patients.new_today, 2, 'الجدد اليوم: بلا القديم');
 
 // المواعيد: اليوم بحالاته، والفائتة (محجوزة مضى وقتها)
-const book = async (patient, at) => (await post(addAppt, '/api/appointments', { patient_id: patient, doctor_id: ids.doc, starts_at: at }, { token: T.rec })).body.id;
-const aDone = await book(p1, `${today} 07:00`), aNo = await book(p2, `${today} 07:15`), aCancel = await book(p1, `${today} 07:30`);
-await book(p2, `${today} 07:45`);
-const aOld = await book(p1, `${yesterday} 10:00`), aFuture = await book(p2, `${tomorrow} 10:00`);
-for (const [id, status] of [[aDone, 'done'], [aNo, 'no_show'], [aCancel, 'cancelled']]) assert.equal((await call(patchAppt, { method: 'PATCH', token: T.rec, params: { id }, body: { status } })).status, 200);
+// الحجز في الماضي ممنوع عبر الواجهة البرمجية، فالمواعيد التي «مضى وقتها» تُدرَج مباشرة في القاعدة (كأنها حُجزت ثم لم يُسجَّل حضورها)
+const rawAppt = (id, patient, at, status = 'scheduled') => raw.prepare(`INSERT INTO appointments (id, tenant_id, patient_id, doctor_id, starts_at, status) VALUES (?, (SELECT id FROM tenants WHERE slug = 'alnoor'), ?, ?, ?, ?)`).run(id, patient, ids.doc, at, status);
+rawAppt('ap-done', p1, `${today} 07:00`, 'done'); rawAppt('ap-no', p2, `${today} 07:15`, 'no_show'); rawAppt('ap-cancel', p1, `${today} 07:30`, 'cancelled');
+rawAppt('ap-today', p2, `${today} 07:45`);
+const aOld = 'ap-old'; rawAppt(aOld, p1, `${yesterday} 10:00`);
+const aFuture = (await post(addAppt, '/api/appointments', { patient_id: p2, doctor_id: ids.doc, starts_at: `${tomorrow} 10:00` }, { token: T.rec })).body.id;
+assert.ok(aFuture, 'الحجز لوقت قادم يعمل عبر الواجهة البرمجية');
 rp = (await summary(T.admin)).body;
 assert.deepEqual(rp.appointments, { total: 4, done: 1, scheduled: 1, cancelled: 1, no_show: 1 });
 const expectedOverdue = ['07:45', '10:00'].length ? [`${today} 07:45`, `${yesterday} 10:00`].filter((x) => x < nowLocal).length : 0;

@@ -76,7 +76,7 @@ const p2 = (await post(addPatient, '/api/patients', { full_name: 'سارة عث�
 await mk(adminAmal, 'استقبال الأمل', 'front@alamal.com', 'reception');
 const amalRec = (await loginAs('alamal', 'front@alamal.com', 'Staff-pass-7731')).token;
 const pAmal = (await post(addPatient, '/api/patients', { full_name: 'مريض الأمل' }, { token: amalRec })).body.id;
-const day = '2026-12-01';
+const day = new Date(Date.now() + 2 * 3600 * 1000 + 30 * 86400000).toISOString().slice(0, 10); // بعد 30 يومًا دائمًا (الحجز في الماضي ممنوع)
 const a1 = (await post(addAppt, '/api/appointments', { patient_id: p1, doctor_id: ids.doctor, starts_at: `${day} 09:00` }, { token: T.reception })).body.id;
 const a2 = (await post(addAppt, '/api/appointments', { patient_id: p2, doctor_id: ids.doctor2, starts_at: `${day} 09:00` }, { token: T.reception })).body.id;
 

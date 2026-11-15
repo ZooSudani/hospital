@@ -174,7 +174,8 @@ const reception = await loginAs('alnoor', 'reem@alnoor.com', 'recept1234');
 const doc1Token = await loginAs('alnoor', 'mazin@alnoor.com', 'doctor1234');
 const doc2Token = await loginAs('alnoor', 'salma@alnoor.com', 'doctor1234');
 const book = (token, b) => call(addAppt, { path: '/api/appointments', method: 'POST', token, body: b });
-const day = '2026-11-02';
+const khartoumDay = (offset = 0) => new Date(Date.now() + 2 * 3600 * 1000 + offset * 86400000).toISOString().slice(0, 10);
+const day = khartoumDay(10); // تاريخ قادم دائمًا
 
 // 17) حجز ناجح، ثم منع الحجز المزدوج على مستوى القاعدة
 r = await book(reception, { patient_id: p1.id, doctor_id: dr1, starts_at: `${day}T10:00` });
