@@ -4,6 +4,8 @@ import { repoFor } from '../../../lib/repo.js';
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const todayKhartoum = () => new Date(Date.now() + 2 * 3600 * 1000).toISOString().slice(0, 10); // توقيت السودان UTC+2
+const nowKhartoum = () => new Date(Date.now() + 2 * 3600 * 1000).toISOString().slice(0, 16).replace('T', ' ');
+const MAX_DAYS_AHEAD = 730;
 
 // يقبل "YYYY-MM-DD HH:MM" أو "YYYY-MM-DDTHH:MM"، ويشترط أن تكون الدقائق 00 أو 15 أو 30 أو 45
 function normalizeSlot(v) {
@@ -30,6 +32,10 @@ export async function onRequestPost({ request, env, data }) {
 
   const starts_at = normalizeSlot(b.starts_at);
   if (!starts_at) return fail(400, 'الموعد بصيغة صحيحة، وبدقائق 00 أو 15 أو 30 أو 45');
+  // لا حجز في وقت مضى، سواء في السنة أو الشهر أو اليوم أو الساعة أو الدقيقة (المقارنة على الدقيقة كاملة بتوقيت الخرطوم)
+  if (starts_at < nowKhartoum()) return fail(400, 'لا يمكن الحجز في وقت مضى. اختر وقتًا قادمًا');
+  const limit = new Date(`${todayKhartoum()}T00:00:00Z`); limit.setUTCDate(limit.getUTCDate() + MAX_DAYS_AHEAD);
+  if (starts_at.slice(0, 10) > limit.toISOString().slice(0, 10)) return fail(400, 'الموعد بعيد جدًا. الحد الأقصى سنتان من اليوم');
   const reason = b.reason ? String(b.reason).trim().slice(0, 200) : null;
 
   const repo = repoFor(env, data.auth);
