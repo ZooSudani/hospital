@@ -1,6 +1,17 @@
 # اختبار الواجهة في متصفح فعلي بحجم الجوال (390x844): لكل دور ما يخصه فقط
 import json, urllib.request, sys
+from datetime import date, datetime, timedelta, timezone
 from playwright.sync_api import sync_playwright
+
+def khartoum_now(): return datetime.now(timezone.utc) + timedelta(hours=2)   # توقيت الخرطوم UTC+2
+def kd(offset=0): return (khartoum_now().date() + timedelta(days=offset)).isoformat()
+WEEKDAYS_AR = ['الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت', 'الأحد']   # بترتيب date.weekday()
+
+def set_date(page, ident, iso):
+    y, m, d = (int(x) for x in iso.split("-"))
+    base = f".dsel[data-for={ident}]"
+    page.select_option(f"{base} .d-year", str(y)); page.select_option(f"{base} .d-month", str(m)); page.select_option(f"{base} .d-day", str(d))
+
 
 BASE = "http://localhost:8799"
 def api(path, method="GET", body=None, token=None):
@@ -110,6 +121,8 @@ with sync_playwright() as p:
 
     # مدير المنصة: المستشفيات فقط
     login(page, "platform", "root@x.com", "Zebra-5521-kx")
+    page.locator("#db-health", has_text="سليمة").wait_for()
+    check("مدير المنصة يرى حالة قاعدة البيانات (كل الترحيلات مطبّقة)", "سليمة" in page.inner_text("#db-health"))
     check("مدير المنصة يرى المستشفيات فقط", visible(page) == {"platform", "paudit", "account"})
     check("تبويبات مدير المنصة والافتراضي «المستشفيات»", tabs(page) == ["hospitals", "activity", "account"] and active_tab(page) == "hospitals")
     body = page.inner_text("body")
@@ -178,7 +191,8 @@ with sync_playwright() as p:
     page.screenshot(path="/tmp/ui-admin.png", full_page=True)
 
     # الاستقبال: بلا موظفين
-    page.click("#logout"); login(page, "alafia", "rec@alafia.com", "recept1234")
+    page.click("#logout"); t_start = khartoum_now().strftime("%H:%M")
+    login(page, "alafia", "rec@alafia.com", "recept1234")
     check("تبويبات الاستقبال والافتراضي «المواعيد»", tabs(page) == ["appts", "patients", "account"] and active_tab(page) == "appts")
     first_row_top = page.evaluate("() => Math.round(document.getElementById('appts').getBoundingClientRect().top)")
     form_top = page.evaluate("() => Math.round(document.getElementById('a-form').getBoundingClientRect().top)")
@@ -189,16 +203,41 @@ with sync_playwright() as p:
     page.evaluate("() => window.scrollTo(0, 0)")
     check("الاستقبال: مرضى ونموذج ومواعيد وحجز بلا موظفين", visible(page) == {"patients", "p-form", "appts", "a-form", "account"})
     page.wait_for_selector("#a-patient option:nth-child(2)", state="attached")
+    # التاريخ: لا حقل أصلي مقلوب، وكل الخيارات من اليوم فصاعدًا بلا ماضٍ في أي مستوى
+    check("لا حقل تاريخ أصلي (لا عرض مقلوب «312026/10/»)", page.locator("input[type=date]").count() == 0 and page.locator(".dsel").count() == 4)
+    today = khartoum_now().date()
+    cur = page.input_value("#a-date")
+    years = page.eval_on_selector_all(".dsel[data-for=a-date] .d-year option", "els => els.map(e => Number(e.value))")
+    check("الحجز: لا سنة ماضية (من السنة الحالية إلى سنتين)", years and min(years) == today.year and max(years) <= today.year + 2)
+    months = page.eval_on_selector_all(".dsel[data-for=a-date] .d-month option", "els => els.map(e => Number(e.value))")
+    days = page.eval_on_selector_all(".dsel[data-for=a-date] .d-day option", "els => els.map(e => Number(e.value))")
+    if cur == today.isoformat():
+        check("الحجز اليوم: لا شهر ماضٍ ولا يوم ماضٍ", min(months) == today.month and min(days) == today.day)
+        times = page.eval_on_selector_all("#a-time option", "els => els.map(e => e.value)")
+        check("الحجز اليوم: لا وقت مضى (كل الأوقات بعد لحظة الدخول)", times and all(t > t_start for t in times))
+    else:
+        check("انتهت أوقات اليوم فنُقل الحجز تلقائيًا إلى الغد", cur == kd(1))
+    check("اسم يوم الأسبوع يظهر تحت التاريخ", page.inner_text(".dsel[data-for=a-date] .dwk").strip() in WEEKDAYS_AR)
+    set_date(page, "a-date", kd(1))
+    times = page.eval_on_selector_all("#a-time option", "els => els.map(e => e.value)")
+    check("الحجز لغد: كل الأوقات متاحة من 07:00 إلى 21:45", len(times) == 60 and times[0] == "07:00" and times[-1] == "21:45")
     page.select_option("#a-doctor", doc_id); page.select_option("#a-time", "10:00"); page.fill("#a-reason", "كشف")
     page.click("#do-appt"); page.locator("#appts", has_text="10:00").wait_for()
+    check("بعد الحجز تنتقل القائمة إلى يوم الموعد", page.input_value("#a-day") == kd(1))
     check("الاستقبال يرى اسم الطبيب في صف الموعد", "د. منتصر" in page.inner_text("#appts"))
     page.fill("#a-patient-q", "آدم"); page.wait_for_timeout(900)
     opts = page.locator("#a-patient option").all_inner_texts()
     check("بحث المريض أثناء الكتابة في نموذج الحجز", len(opts) == 1 and "محمد آدم" in opts[0])
+    # البحث برقم الملف: يعيد الملف المطلوب وحده (لا كل من تحتوي هواتفهم الرقم)
+    for term, expect in [("2", "ملف 2"), ("٢", "ملف 2"), ("ملف 3", "ملف 3"), ("#1", "ملف 1")]:
+        page.fill("#a-patient-q", term); page.wait_for_timeout(900)
+        got = page.locator("#a-patient option").all_inner_texts()
+        check(f"البحث برقم الملف «{term}» يعيد ملفًا واحدًا فقط", len(got) == 1 and expect in got[0])
     d0 = page.input_value("#a-day"); page.click("#day-next"); d1 = page.input_value("#a-day")
     page.click("#day-prev"); page.click("#day-prev"); d2 = page.input_value("#a-day"); page.click("#day-today"); d3 = page.input_value("#a-day")
-    page.locator("#appts", has_text="10:00").wait_for()
-    check("التنقل بين الأيام (التالي والسابق والعودة لليوم)", d1 != d0 and d2 != d0 and d1 != d2 and d3 == d0)
+    page.click("#day-next"); page.locator("#appts", has_text="10:00").wait_for()
+    check("التنقل بين الأيام (التالي والسابق والعودة لليوم)", d0 == kd(1) and d1 == kd(2) and d2 == kd(0) and d3 == kd(0))
+    check("جدول اليوم يعرض اسم يوم الأسبوع", page.inner_text(".dsel[data-for=a-day] .dwk").strip() in WEEKDAYS_AR)
     go(page, "patients")
     check("اسم مريض خبيث يُعرض نصًا لا وسومًا (XSS)", page.locator("#patients img, #patients b").count() == 0 and page.evaluate("() => window.__xss") is None and "onerror" in page.inner_text("#patients"))
     check("الاستقبال: أزرار التعديل بلا زر السجل الطبي", page.locator("#patients button[data-act=edit]").count() >= 1 and page.locator("#patients button[data-act=file]").count() == 0)
@@ -207,6 +246,24 @@ with sync_playwright() as p:
     page.fill("#p-phone", "0955555555"); page.click("#do-patient")
     page.locator("#patients", has_text="0955555555").wait_for()
     check("الاستقبال: تعديل بيانات مريض", page.input_value("#p-name") == "")
+    # تاريخ الميلاد: ماضٍ فقط، واختياري، ويُحفظ ويُسترجع كما أُدخل
+    by = page.eval_on_selector_all(".dsel[data-for=p-birth] .d-year option", "els => els.map(e => e.value)")
+    check("تاريخ الميلاد: السنوات من الحالية نزولًا إلى 1900 (لا مستقبل)", by[0] == "" and by[1] == str(today.year) and by[-1] == "1900")
+    page.select_option(".dsel[data-for=p-birth] .d-year", str(today.year))
+    bm = page.eval_on_selector_all(".dsel[data-for=p-birth] .d-month option", "els => els.map(e => e.value).filter(Boolean).map(Number)")
+    check("تاريخ الميلاد: في السنة الحالية لا شهر بعد الشهر الحالي", max(bm) == today.month)
+    page.fill("#p-name", "مريض بتاريخ ميلاد"); page.fill("#p-phone", "0933333333")
+    set_date(page, "p-birth", "1990-05-17")
+    check("تاريخ الميلاد: يوم الأسبوع الصحيح", page.inner_text(".dsel[data-for=p-birth] .dwk").strip() == WEEKDAYS_AR[date(1990, 5, 17).weekday()])
+    page.click("#do-patient"); page.locator("#patients", has_text="مريض بتاريخ ميلاد").wait_for()
+    page.locator("#patients tr", has_text="مريض بتاريخ ميلاد").locator("button[data-act=edit]").click()
+    check("تاريخ الميلاد: يُسترجع كما أُدخل عند التعديل", page.input_value("#p-birth") == "1990-05-17" and page.input_value(".dsel[data-for=p-birth] .d-day") == "17" and page.input_value(".dsel[data-for=p-birth] .d-month") == "5")
+    page.click("#p-cancel")
+    check("بعد الإلغاء يعود تاريخ الميلاد فارغًا", page.input_value("#p-birth") == "")
+    # بحث تبويب المرضى برقم الملف
+    page.fill("#q", "1"); page.wait_for_timeout(700)
+    check("بحث المرضى برقم الملف «1» لا يخلط الهواتف", page.locator("#patients tr").count() == 1 and "محمد آدم" in page.inner_text("#patients"))
+    page.fill("#q", ""); page.wait_for_timeout(500)
     check("الإشعار ثابت الموضع أعلى الشاشة", page.evaluate("() => getComputedStyle(document.getElementById('msg')).position") == "fixed")
     page.evaluate("() => { window.scrollTo(0, document.body.scrollHeight); document.getElementById('do-patient').click(); }")
     page.locator("#msg.err").wait_for()
@@ -220,6 +277,7 @@ with sync_playwright() as p:
 
     # الطبيب: قوائم قراءة فقط، ومواعيده هو
     page.click("#logout"); login(page, "alafia", "doc@alafia.com", "doctor1234")
+    page.click("#day-next"); page.locator("#appts", has_text="كشف").wait_for()
     check("تبويبات الطبيب والافتراضي «المواعيد» (جدوله أولًا)", tabs(page) == ["appts", "patients", "account"] and active_tab(page) == "appts")
     check("الطبيب: لا يظهر له زر «+ حجز موعد جديد»", not page.is_visible("[data-jump=a-form]"))
     check("الطبيب: قائمة المرضى والمواعيد فقط", visible(page) == {"patients", "appts", "account"})
@@ -340,7 +398,8 @@ with sync_playwright() as p:
     check("زر Enter يسجّل الدخول", page.is_visible("#tabs"))
 
     # انقطاع الإنترنت بعد الدخول: تُعرض آخر بيانات، والحفظ يُمنع برسالة واضحة، والعودة تُخفي الشريط
-    page.locator("#appts tr").first.wait_for(); page.wait_for_timeout(500)
+    page.locator("#appts tr").first.wait_for(); page.click("#day-today"); page.wait_for_timeout(400)
+    page.click("#day-next"); page.locator("#appts", has_text="10:00").wait_for(); page.wait_for_timeout(300)   # تُحمَّل قائمة الغد وتُحفظ
     stored = page.evaluate("() => Object.keys(sessionStorage).filter((k) => k.startsWith('c:')).length")
     check("نسخ القوائم محفوظة في sessionStorage فقط", stored >= 2)
     cache_api = page.evaluate("() => caches.keys().then((ks) => Promise.all(ks.map((k) => caches.open(k).then((c) => c.keys())))).then((all) => all.flat().map((r) => new URL(r.url).pathname))")
@@ -348,8 +407,10 @@ with sync_playwright() as p:
     ctx.set_offline(True)
     page.locator("#offline-bar:not([hidden])").wait_for()
     check("شريط «غير متصل» يظهر فور الانقطاع", "غير متصل" in page.inner_text("#offline-bar"))
-    page.click("#day-today")
+    page.click("#day-prev")
     page.locator("#offline-bar", has_text="آخر بيانات حُمّلت").wait_for()
+    page.click("#day-next")
+    page.locator("#appts", has_text="10:00").wait_for()
     check("بلا إنترنت: تُعرض آخر مواعيد حُمّلت مع وقتها", "10:00" in page.inner_text("#appts") and "لا يمكن حفظ" in page.inner_text("#offline-bar"))
     page.click("#day-next")
     page.locator("#msg.err").wait_for()

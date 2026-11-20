@@ -17,6 +17,7 @@ import * as tenantOne from '../../functions/api/platform/tenants/[id].js';
 import * as tenantStaff from '../../functions/api/platform/tenants/[id]/staff.js';
 import * as tenantStaffOne from '../../functions/api/platform/tenants/[id]/staff/[uid].js';
 import * as platformAudit from '../../functions/api/platform/audit.js';
+import * as platformHealth from '../../functions/api/platform/health.js';
 import * as accountPw from '../../functions/api/account/password.js';
 import * as meApi from '../../functions/api/me.js';
 import * as invoices from '../../functions/api/invoices/index.js';
@@ -36,7 +37,7 @@ const routes = [
   [/^\/api\/appointments$/, appts], [/^\/api\/appointments\/([^/]+)$/, apptOne], [/^\/api\/audit$/, audit], [/^\/api\/me$/, meApi],
   [/^\/api\/invoices$/, invoices], [/^\/api\/invoices\/([^/]+)$/, invoiceOne], [/^\/api\/invoices\/([^/]+)\/pay$/, invoicePay], [/^\/api\/invoices\/([^/]+)\/payments$/, invoicePayments], [/^\/api\/reports\/summary$/, reportSummary],
   [/^\/api\/patients\/([^/]+)\/visits$/, visits], [/^\/api\/staff\/([^/]+)\/permissions$/, staffPerms],
-  [/^\/api\/platform\/tenants\/([^/]+)\/staff\/([^/]+)\/permissions$/, platformPerms], [/^\/api\/platform\/tenants\/([^/]+)$/, tenantOne], [/^\/api\/platform\/tenants\/([^/]+)\/staff$/, tenantStaff], [/^\/api\/platform\/tenants\/([^/]+)\/staff\/([^/]+)$/, tenantStaffOne], [/^\/api\/platform\/audit$/, platformAudit], [/^\/api\/account\/password$/, accountPw],
+  [/^\/api\/platform\/tenants\/([^/]+)\/staff\/([^/]+)\/permissions$/, platformPerms], [/^\/api\/platform\/tenants\/([^/]+)$/, tenantOne], [/^\/api\/platform\/tenants\/([^/]+)\/staff$/, tenantStaff], [/^\/api\/platform\/tenants\/([^/]+)\/staff\/([^/]+)$/, tenantStaffOne], [/^\/api\/platform\/audit$/, platformAudit], [/^\/api\/platform\/health$/, platformHealth], [/^\/api\/account\/password$/, accountPw],
 ];
 
 http.createServer(async (req, res) => {
