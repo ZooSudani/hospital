@@ -117,7 +117,7 @@ function render() {
   $('s-paudit').hidden = !(on && session.user.role === 'platform_admin');
   $('appts-th').textContent = has('appointments.all') || !on ? 'المريض والطبيب' : 'المريض';
   $('who').textContent = on ? `${session.user.name} · ${roleNames[session.user.role]}${session.tenant ? ' · ' + session.tenant.name : ''}` : 'لم تسجل الدخول';
-  if (!$('s-platform').hidden) loadTenants();
+  if (!$('s-platform').hidden) { loadTenants(); loadHealth(); }
   if (!$('s-patients').hidden) loadPatients();
   if (!$('s-staff').hidden) loadStaff();
   if (!$('s-audit').hidden) loadAudit();
@@ -224,6 +224,21 @@ async function openPermEditor(box, url, afterSave) {
       if (afterSave) afterSave();
     } catch (e) { say(e.message, 'err'); }
   };
+}
+
+// ===== سلامة قاعدة البيانات (لمدير المنصة): هل شُغِّلت كل ملفات الترحيل؟ =====
+async function loadHealth() {
+  const box = $('db-health');
+  try {
+    const h = await api('/api/platform/health');
+    box.hidden = false;
+    if (h.ok) { box.innerHTML = '<span class="badge ok">قاعدة البيانات سليمة</span> <small>كل ملفات الترحيل مطبّقة</small>'; return; }
+    const byFile = {};
+    for (const m of h.missing) (byFile[m.migration] ||= []).push(m.item);
+    box.innerHTML = `<b>ترحيلات ناقصة في قاعدة البيانات <span class="badge bad">${h.missing.length}</span></b>
+      <p class="note">شغّل الملفات التالية في D1 Console، فقد تفشل بعض الميزات قبل ذلك:</p>`
+      + Object.entries(byFile).map(([f, items]) => `<div class="pay-row"><b dir="ltr">${esc(f)}</b><br><small>${items.map(esc).join('، ')}</small></div>`).join('');
+  } catch (e) { box.hidden = true; }
 }
 
 // ===== لوحة مدير المنصة =====
@@ -372,7 +387,7 @@ async function loadPatients() {
 
 function resetPatientForm() {
   editingPatient = null;
-  ['p-name', 'p-phone', 'p-birth', 'p-gender'].forEach((i) => ($(i).value = ''));
+  ['p-name', 'p-phone', 'p-gender'].forEach((i) => ($(i).value = '')); setDate('p-birth', '');
   $('do-patient').textContent = 'حفظ المريض'; $('p-cancel').hidden = true;
   $('p-title').textContent = has('patients.create') ? 'تسجيل مريض' : 'تعديل بيانات مريض (اختر «تعديل» من القائمة)';
 }
@@ -399,7 +414,7 @@ $('patients').onclick = async (ev) => {
   if (b.dataset.act === 'edit') {
     const p = patientCache[b.dataset.id]; if (!p) return;
     editingPatient = p.id;
-    $('p-name').value = p.full_name; $('p-phone').value = p.phone || ''; $('p-birth').value = p.birth_date || ''; $('p-gender').value = p.gender || '';
+    $('p-name').value = p.full_name; $('p-phone').value = p.phone || ''; setDate('p-birth', p.birth_date || ''); $('p-gender').value = p.gender || '';
     $('do-patient').textContent = 'حفظ التعديلات'; $('p-cancel').hidden = false; $('p-title').textContent = 'تعديل بيانات المريض';
     $('p-form').scrollIntoView();
   } else if (b.dataset.act === 'file') {
@@ -424,7 +439,7 @@ function revenueChart(series, selected) {
 
 async function loadReports() {
   try {
-    if (!$('r-day').value) $('r-day').value = todayKhartoum();
+    if (!$('r-day').value) setDate('r-day', todayKhartoum());
     const r = await api('/api/reports/summary?date=' + encodeURIComponent($('r-day').value));
     const m = r.revenue.by_method, a = r.appointments;
     const overdue = r.overdue.items.map((x) => `<tr><td dir="ltr">${esc(x.starts_at.slice(5))}</td><td>${x.patient_name ? esc(x.patient_name) : 'مريض'}<br><small>${esc(x.doctor_name)}</small></td></tr>`).join('');
@@ -449,15 +464,13 @@ async function loadReports() {
 }
 
 function shiftReportDay(n) {
-  const d = new Date($('r-day').value + 'T00:00:00Z');
-  d.setUTCDate(d.getUTCDate() + n);
-  $('r-day').value = d.toISOString().slice(0, 10);
+  setDate('r-day', addDays($('r-day').value || todayKhartoum(), n));
   loadReports();
 }
 $('r-day').onchange = loadReports;
 $('r-prev').onclick = () => shiftReportDay(-1);
 $('r-next').onclick = () => shiftReportDay(1);
-$('r-today').onclick = () => { $('r-day').value = todayKhartoum(); loadReports(); };
+$('r-today').onclick = () => { setDate('r-day', todayKhartoum()); loadReports(); };
 
 // ===== الفواتير =====
 const invStatus = { open: 'مفتوحة', paid: 'مسددة', void: 'ملغاة' };
@@ -609,16 +622,87 @@ $('staff').onclick = async (ev) => {
 const statusNames = { scheduled: 'محجوز', done: 'تمت', cancelled: 'ملغي', no_show: 'لم يحضر' };
 const todayKhartoum = () => new Date(Date.now() + 2 * 3600 * 1000).toISOString().slice(0, 10);
 
-function initApptDates() {
-  if (!$('a-day').value) $('a-day').value = todayKhartoum();
-  if (!$('a-date').value) $('a-date').value = todayKhartoum();
-  if (!$('a-time').options.length) {
-    for (let h = 7; h < 22; h++) for (const m of ['00', '15', '30', '45']) {
-      const t = String(h).padStart(2, '0') + ':' + m;
-      $('a-time').add(new Option(t, t));
-    }
-    $('a-time').value = '09:00';
+// ===== اختيار التاريخ: يوم وشهر وسنة =====
+// بدل حقل التاريخ الأصلي الذي يعرضه آيفون بترتيب مقلوب في الصفحات العربية («312026/10/»).
+// القيمة تبقى في حقل مخفي بصيغة YYYY-MM-DD، والأنواع: birth (ماضٍ فقط، واختياري)، future (اليوم فصاعدًا)، view (للاطلاع على أي يوم)، report.
+const MONTHS = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
+const WEEKDAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+const pad2 = (n) => String(n).padStart(2, '0');
+const daysIn = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();
+const addDays = (ymd, n) => { const d = new Date(ymd + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const DATE_KINDS = {
+  birth: () => ({ min: '1900-01-01', max: todayKhartoum(), optional: true, desc: true }),
+  future: () => ({ min: todayKhartoum(), max: addDays(todayKhartoum(), 730) }),
+  view: () => ({ min: addDays(todayKhartoum(), -1826), max: addDays(todayKhartoum(), 730) }),
+  report: () => ({ min: addDays(todayKhartoum(), -1826), max: todayKhartoum() }),
+};
+const dateBox = (id) => document.querySelector(`.dsel[data-for="${id}"]`);
+
+// يعيد بناء الخيارات حسب الحدود: لا سنة ولا شهر ولا يوم خارج المسموح، ثم يحدّث القيمة المخفية
+function refreshDateSelect(box, wanted) {
+  const hidden = $(box.dataset.for), cfg = DATE_KINDS[box.dataset.kind]();
+  const [dSel, mSel, ySel] = box.querySelectorAll('select');
+  const [minY, minM, minD] = cfg.min.split('-').map(Number), [maxY, maxM, maxD] = cfg.max.split('-').map(Number);
+  let y = Number(ySel.value) || 0, m = Number(mSel.value) || 0, d = Number(dSel.value) || 0;
+  if (wanted !== undefined) [y, m, d] = wanted ? wanted.split('-').map(Number) : [0, 0, 0];
+  if (!cfg.optional && !(y && m && d)) [y, m, d] = todayKhartoum().split('-').map(Number);
+  const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+  if (y) y = clamp(y, minY, maxY);
+  const mLo = y === minY ? minM : 1, mHi = y === maxY ? maxM : 12;
+  if (m) m = clamp(m, mLo, mHi);
+  const dLo = y && m && y === minY && m === minM ? minD : 1;
+  const dHi = y && m ? Math.min(daysIn(y, m), y === maxY && m === maxM ? maxD : 31) : 31;
+  if (d) d = clamp(d, dLo, dHi);
+  const years = []; for (let v = minY; v <= maxY; v++) years.push(v);
+  if (cfg.desc) years.reverse();
+  const opt = (v, text, sel) => `<option value="${v}"${sel ? ' selected' : ''}>${text}</option>`;
+  const blank = (t) => (cfg.optional ? `<option value="">${t}</option>` : '');
+  ySel.innerHTML = blank('السنة') + years.map((v) => opt(v, v, v === y)).join('');
+  mSel.innerHTML = blank('الشهر') + Array.from({ length: mHi - mLo + 1 }, (_, i) => mLo + i).map((v) => opt(v, MONTHS[v - 1], v === m)).join('');
+  dSel.innerHTML = blank('اليوم') + Array.from({ length: dHi - dLo + 1 }, (_, i) => dLo + i).map((v) => opt(v, v, v === d)).join('');
+  ySel.value = y || ''; mSel.value = m || ''; dSel.value = d || '';
+  const value = y && m && d ? `${y}-${pad2(m)}-${pad2(d)}` : '';
+  box.querySelector('.dwk').textContent = value ? WEEKDAYS[new Date(value + 'T00:00:00Z').getUTCDay()] : '';
+  const changed = hidden.value !== value;
+  hidden.value = value;
+  return changed;
+}
+
+function buildDateSelect(box) {
+  const id = box.dataset.for;
+  box.innerHTML = `<select class="d-day" id="${id}-d" aria-label="اليوم"></select><select class="d-month" aria-label="الشهر"></select><select class="d-year" aria-label="السنة"></select><small class="dwk"></small>`;
+  box.querySelectorAll('select').forEach((sel) => sel.addEventListener('change', () => {
+    if (refreshDateSelect(box)) $(id).dispatchEvent(new Event('change')); // تغيير من المستخدم يُعلِم من يستمع (الجدول، الأوقات...)
+  }));
+  refreshDateSelect(box, '');
+}
+
+// تعيين قيمة برمجيًا (دون إطلاق حدث): تُقصّ إلى الحدود المسموحة
+function setDate(id, value) { refreshDateSelect(dateBox(id), value || ''); }
+document.querySelectorAll('.dsel').forEach(buildDateSelect);
+
+// ===== أوقات الحجز: لا يظهر وقت مضى =====
+const SLOTS = []; for (let h = 7; h < 22; h++) for (const m of [0, 15, 30, 45]) SLOTS.push(`${pad2(h)}:${pad2(m)}`);
+
+function refreshTimes() {
+  const now = new Date(Date.now() + 2 * 3600 * 1000).toISOString(); // بتوقيت الخرطوم
+  const today = now.slice(0, 10), nowTime = now.slice(11, 16);
+  const sel = $('a-time'), before = sel.value;
+  const isToday = $('a-date').value === today;
+  const slots = isToday ? SLOTS.filter((t) => t > nowTime) : SLOTS; // اليوم: ما بعد الآن فقط
+  if (isToday && !slots.length) { // انتهت أوقات اليوم: ننقل الحجز إلى الغد
+    setDate('a-date', addDays(today, 1)); say('انتهت أوقات الحجز لهذا اليوم، اخترنا لك الغد', 'ok'); return refreshTimes();
   }
+  sel.innerHTML = slots.map((t) => `<option value="${t}">${t}</option>`).join('');
+  sel.value = slots.includes(before) ? before : (slots.includes('09:00') ? '09:00' : slots[0]);
+}
+$('a-date').onchange = refreshTimes;
+setInterval(() => { if ($('a-date').value === todayKhartoum()) refreshTimes(); }, 60000);
+
+function initApptDates() {
+  if (!$('a-day').value) setDate('a-day', todayKhartoum());
+  if (!$('a-date').value) setDate('a-date', todayKhartoum());
+  refreshTimes();
 }
 
 const patientOption = (p) => `<option value="${esc(p.id)}">${esc(p.full_name)} (ملف ${esc(p.file_no)})</option>`;
@@ -676,19 +760,17 @@ async function loadAppts() {
 $('a-day').onchange = loadAppts;
 
 function shiftDay(n) {
-  const d = new Date($('a-day').value + 'T00:00:00Z');
-  d.setUTCDate(d.getUTCDate() + n);
-  $('a-day').value = d.toISOString().slice(0, 10);
+  setDate('a-day', addDays($('a-day').value || todayKhartoum(), n));
   loadAppts();
 }
 $('day-prev').onclick = () => shiftDay(-1);
 $('day-next').onclick = () => shiftDay(1);
-$('day-today').onclick = () => { $('a-day').value = todayKhartoum(); loadAppts(); };
+$('day-today').onclick = () => { setDate('a-day', todayKhartoum()); loadAppts(); };
 
 $('do-appt').onclick = async () => {
   try {
     await api('/api/appointments', { method: 'POST', body: { patient_id: $('a-patient').value, doctor_id: $('a-doctor').value, starts_at: $('a-date').value + ' ' + $('a-time').value, reason: $('a-reason').value } });
-    say('تم حجز الموعد', 'ok'); $('a-reason').value = ''; $('a-day').value = $('a-date').value; loadAppts(); toList('a-list-title');
+    say('تم حجز الموعد', 'ok'); $('a-reason').value = ''; setDate('a-day', $('a-date').value); loadAppts(); toList('a-list-title');
   } catch (e) { say(e.message, 'err'); }
 };
 

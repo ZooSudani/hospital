@@ -67,3 +67,8 @@ button:disabled { opacity:.55; cursor:progress; }
 .chart .bar.sel { fill:var(--teal); }
 .chart .val { fill:var(--ink); }
 .pay-row { border-top:1px solid var(--line); padding:8px 0; font-size:14px; }
+.dsel { display:flex; flex-wrap:wrap; gap:6px; direction:ltr; }
+.dsel select { flex:1; min-width:0; padding:10px 4px; }
+.dsel .d-day { flex:.75; }
+.dsel .d-year { flex:1.15; }
+.dwk { flex-basis:100%; text-align:center; color:var(--muted); font-size:13px; direction:rtl; }

@@ -44,6 +44,7 @@
   <p id="setup-link" class="center" hidden><button class="line" id="toggle-setup">أول مرة؟ أنشئ مدير المنصة</button></p>
 
   <section id="s-platform" hidden>
+    <div id="db-health" class="card" hidden></div>
     <h2>إضافة مستشفى جديد</h2>
     <label for="t-name">اسم المستشفى</label><input id="t-name">
     <label for="t-slug">رمز المستشفى (إنجليزي صغير)</label><input id="t-slug" dir="ltr" autocapitalize="none">
@@ -62,7 +63,7 @@
 
   <section id="s-patients" hidden>
     <h2 id="p-list-title">المرضى</h2>
-    <input id="q" placeholder="ابحث بالاسم أو الهاتف أو رقم الملف">
+    <input id="q" placeholder="ابحث بالاسم أو الهاتف أو رقم الملف (مثل: 12)">
     <button class="line jump" data-jump="p-form">+ تسجيل مريض جديد</button>
     <table><thead><tr><th>الملف</th><th>الاسم</th><th>الهاتف</th><th></th></tr></thead><tbody id="patients"></tbody></table>
     <p id="p-hint" class="note" hidden>يُعرض آخر 50 مريضًا فقط. استخدم البحث للوصول لبقية المرضى.</p>
@@ -70,7 +71,7 @@
     <label for="p-name">الاسم الكامل</label><input id="p-name">
     <div class="row">
       <div><label for="p-phone">الهاتف</label><input id="p-phone" inputmode="tel" dir="ltr"></div>
-      <div><label for="p-birth">تاريخ الميلاد</label><input id="p-birth" type="date" dir="ltr"></div>
+      <div><label for="p-birth-d">تاريخ الميلاد</label><input id="p-birth" type="hidden"><div class="dsel" data-for="p-birth" data-kind="birth"></div></div>
     </div>
     <label for="p-gender">الجنس</label>
     <select id="p-gender"><option value="">غير محدد</option><option value="male">ذكر</option><option value="female">أنثى</option></select>
@@ -92,16 +93,16 @@
 
   <section id="s-appts" hidden>
     <h2 id="a-list-title">المواعيد</h2>
-    <label for="a-day">اليوم</label><input id="a-day" type="date" dir="ltr">
+    <label for="a-day-d">اليوم</label><input id="a-day" type="hidden"><div class="dsel" data-for="a-day" data-kind="view"></div>
     <div class="actions"><button class="mini" id="day-prev">اليوم السابق</button><button class="mini" id="day-today">اليوم</button><button class="mini" id="day-next">اليوم التالي</button></div>
     <button class="line jump" data-jump="a-form">+ حجز موعد جديد</button>
     <table><thead><tr><th>الوقت</th><th id="appts-th">المريض والطبيب</th><th></th></tr></thead><tbody id="appts"></tbody></table>
     <div id="a-form" class="mt">
       <h2>حجز موعد</h2>
-      <label for="a-patient-q">المريض</label><input id="a-patient-q" placeholder="ابحث بالاسم أو الهاتف أو رقم الملف"><select id="a-patient" aria-label="المريض"></select>
+      <label for="a-patient-q">المريض</label><input id="a-patient-q" placeholder="ابحث بالاسم أو الهاتف أو رقم الملف (مثل: 12)"><select id="a-patient" aria-label="المريض"></select>
       <label for="a-doctor">الطبيب</label><select id="a-doctor"></select>
       <div class="row">
-        <div><label for="a-date">التاريخ</label><input id="a-date" type="date" dir="ltr"></div>
+        <div><label for="a-date-d">التاريخ</label><input id="a-date" type="hidden"><div class="dsel" data-for="a-date" data-kind="future"></div></div>
         <div><label for="a-time">الوقت</label><select id="a-time" dir="ltr"></select></div>
       </div>
       <label for="a-reason">سبب الزيارة (اختياري)</label><input id="a-reason">
@@ -116,7 +117,7 @@
     <div id="inv-detail" class="card" hidden></div>
     <div id="inv-form" class="mt">
       <h2>إصدار فاتورة</h2>
-      <label for="inv-patient-q">المريض</label><input id="inv-patient-q" placeholder="ابحث بالاسم أو الهاتف أو رقم الملف"><select id="inv-patient" aria-label="المريض"></select>
+      <label for="inv-patient-q">المريض</label><input id="inv-patient-q" placeholder="ابحث بالاسم أو الهاتف أو رقم الملف (مثل: 12)"><select id="inv-patient" aria-label="المريض"></select>
       <label for="inv-total">المبلغ</label><input id="inv-total" type="number" inputmode="numeric" min="1" dir="ltr">
       <button id="do-invoice">إصدار الفاتورة</button>
     </div>
@@ -124,7 +125,7 @@
 
   <section id="s-reports" hidden>
     <h2>تقارير الإدارة</h2>
-    <label for="r-day">اليوم</label><input id="r-day" type="date" dir="ltr">
+    <label for="r-day-d">اليوم</label><input id="r-day" type="hidden"><div class="dsel" data-for="r-day" data-kind="report"></div>
     <div class="actions"><button class="mini" id="r-prev">اليوم السابق</button><button class="mini" id="r-today">اليوم</button><button class="mini" id="r-next">اليوم التالي</button></div>
     <div id="r-body"></div>
   </section>
